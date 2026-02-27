@@ -113,7 +113,6 @@ func parseExecRoute(parts []string, info RouteInfo) RouteInfo {
 var safePassthroughPaths = map[string]bool{
 	"_ping":   true,
 	"version": true,
-	"info":    true,
 }
 
 // safePassthroughPrefixes covers paths like /images/json, /images/{id}/json, /images/{id}/tag, /images/create.
@@ -135,6 +134,10 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 		}
 		if parts[0] == "build" {
 			info.Kind = Build
+			return info
+		}
+		if parts[0] == "info" {
+			info.Kind = SystemInfo
 			return info
 		}
 		info.Kind = Denied

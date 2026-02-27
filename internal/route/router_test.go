@@ -52,7 +52,7 @@ func TestParse(t *testing.T) {
 		{"/images/abc123/json", Passthrough, "", "/images/abc123/json"},
 		{"/images/abc123/tag", Passthrough, "", "/images/abc123/tag"},
 		{"/version", Passthrough, "", "/version"},
-		{"/info", Passthrough, "", "/info"},
+		{"/info", SystemInfo, "", "/info"},
 		{"/_ping", Passthrough, "", "/_ping"},
 		{"/", Passthrough, "", "/"},
 
@@ -123,6 +123,7 @@ func TestEndpointKindString(t *testing.T) {
 		{ExecCreate, "exec_create"},
 		{ExecOp, "exec_op"},
 		{Build, "build"},
+		{SystemInfo, "system_info"},
 		{Denied, "denied"},
 	}
 	for _, tt := range tests {

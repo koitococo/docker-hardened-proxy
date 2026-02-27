@@ -110,6 +110,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
 			return
 		}
+	case route.SystemInfo:
+		if h.cfg.Audit.DenyInfo {
+			h.logger.Warn("denied",
+				"endpoint", info.Kind.String(),
+				"reason", "system info is denied by policy",
+			)
+			http.Error(w, "denied: system info is denied by policy", http.StatusForbidden)
+			return
+		}
 	case route.Build:
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

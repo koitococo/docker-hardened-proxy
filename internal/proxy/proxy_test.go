@@ -503,3 +503,31 @@ func TestHandlerPassthrough(t *testing.T) {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
+
+func TestHandlerInfoDenied(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyInfo = true
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("GET", "/v1.41/info", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerInfoAllowed(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyInfo = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("GET", "/v1.41/info", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}

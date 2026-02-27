@@ -18,6 +18,8 @@ const (
 	ExecOp
 	// Build is POST /build.
 	Build
+	// SystemInfo is GET /info.
+	SystemInfo
 	// Denied endpoints are blocked by default (unrecognized/dangerous paths).
 	Denied
 )
@@ -36,6 +38,8 @@ func (k EndpointKind) String() string {
 		return "exec_op"
 	case Build:
 		return "build"
+	case SystemInfo:
+		return "system_info"
 	case Denied:
 		return "denied"
 	default:
