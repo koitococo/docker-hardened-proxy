@@ -51,9 +51,35 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case route.ContainerCreate:
 		h.handleContainerCreate(w, r)
 		return
+	case route.ContainerOp, route.ExecCreate:
+		if err := h.checkNamespace(r, info); err != nil {
+			h.logger.Warn("namespace check failed", "id", info.ID, "error", err)
+			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			return
+		}
+	case route.ExecOp:
+		if err := h.checkExecNamespace(r, info); err != nil {
+			h.logger.Warn("exec namespace check failed", "id", info.ID, "error", err)
+			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			return
+		}
 	}
 
 	h.reverse.ServeHTTP(w, r)
+}
+
+func (h *Handler) checkNamespace(r *http.Request, info route.RouteInfo) error {
+	if info.ID == "" {
+		return nil
+	}
+	return audit.CheckContainer(r.Context(), h.docker, info.ID, h.cfg.Namespace)
+}
+
+func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) error {
+	if info.ID == "" {
+		return nil
+	}
+	return audit.CheckExec(r.Context(), h.docker, info.ID, h.cfg.Namespace)
 }
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
