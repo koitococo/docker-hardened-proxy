@@ -68,10 +68,12 @@ type BindMountRule struct {
 }
 
 type NamespacesConfig struct {
-	NetworkMode NamespaceModeConfig `yaml:"network_mode"`
-	IPCMode     NamespaceModeConfig `yaml:"ipc_mode"`
-	PIDMode     NamespaceModeConfig `yaml:"pid_mode"`
-	UTSMode     NamespaceModeConfig `yaml:"uts_mode"`
+	NetworkMode  NamespaceModeConfig `yaml:"network_mode"`
+	IPCMode      NamespaceModeConfig `yaml:"ipc_mode"`
+	PIDMode      NamespaceModeConfig `yaml:"pid_mode"`
+	UTSMode      NamespaceModeConfig `yaml:"uts_mode"`
+	UserNSMode   NamespaceModeConfig `yaml:"user_ns_mode"`
+	CgroupNSMode NamespaceModeConfig `yaml:"cgroup_ns_mode"`
 }
 
 type NamespaceModeConfig struct {

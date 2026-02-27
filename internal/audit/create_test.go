@@ -396,6 +396,34 @@ func TestAuditCreateUTSModeHostDenied(t *testing.T) {
 	}
 }
 
+func TestAuditCreateUsernsModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.UserNSMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"UsernsMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for UsernsMode=host")
+	}
+}
+
+func TestAuditCreateCgroupnsModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.CgroupNSMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"CgroupnsMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for CgroupnsMode=host")
+	}
+}
+
 func TestAuditCreateNamespaceModeNotDenied(t *testing.T) {
 	cfg := testConfig()
 	// All deny_host flags are false by default

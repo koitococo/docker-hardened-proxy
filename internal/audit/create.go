@@ -316,6 +316,8 @@ func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool
 		{"IpcMode", cfg.IPCMode.DenyHost, "IpcMode"},
 		{"PidMode", cfg.PIDMode.DenyHost, "PidMode"},
 		{"UTSMode", cfg.UTSMode.DenyHost, "UTSMode"},
+		{"UsernsMode", cfg.UserNSMode.DenyHost, "UsernsMode"},
+		{"CgroupnsMode", cfg.CgroupNSMode.DenyHost, "CgroupnsMode"},
 	}
 
 	for _, check := range checks {
