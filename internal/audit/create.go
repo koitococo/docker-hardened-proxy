@@ -109,6 +109,13 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		}
 	}
 
+	// Check LogConfig
+	if cfg.Audit.DenyLogConfigOverride {
+		if denied, reason := cr.checkLogConfig(); denied {
+			return &AuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
 	// Check namespace modes
 	if denied, reason := cr.checkNamespaceModes(&cfg.Audit.Namespaces); denied {
 		return &AuditResult{Denied: true, Reason: reason}, nil
@@ -406,6 +413,30 @@ func (cr *CreateRequest) checkPidsLimit() (bool, string) {
 	}
 	if limit <= 0 {
 		return true, "unlimited PidsLimit is denied"
+	}
+	return false, ""
+}
+
+func (cr *CreateRequest) checkLogConfig() (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["LogConfig"]
+	if !ok {
+		return false, ""
+	}
+	var logConfig map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &logConfig); err != nil {
+		return true, "LogConfig field has invalid type"
+	}
+	if driverRaw, ok := logConfig["Type"]; ok {
+		var driver string
+		if err := json.Unmarshal(driverRaw, &driver); err != nil {
+			return true, "LogConfig.Type field has invalid type"
+		}
+		if driver != "" {
+			return true, fmt.Sprintf("custom log driver %q is denied", driver)
+		}
 	}
 	return false, ""
 }

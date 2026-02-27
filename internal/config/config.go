@@ -86,6 +86,7 @@ type AuditConfig struct {
 	DenyInfo                bool               `yaml:"deny_info"`
 	DenyOomKillDisable      bool               `yaml:"deny_oom_kill_disable"`
 	DenyPidsLimitOverride   bool               `yaml:"deny_pids_limit_override"`
+	DenyLogConfigOverride   bool               `yaml:"deny_log_config_override"`
 	DeniedCapabilities      []string           `yaml:"denied_capabilities"`
 	Sysctls                 SysctlsConfig      `yaml:"sysctls"`
 	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`

