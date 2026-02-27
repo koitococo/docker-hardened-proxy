@@ -85,6 +85,7 @@ type AuditConfig struct {
 	DenyDevices             bool               `yaml:"deny_devices"`
 	DenyInfo                bool               `yaml:"deny_info"`
 	DeniedCapabilities      []string           `yaml:"denied_capabilities"`
+	Sysctls                 SysctlsConfig      `yaml:"sysctls"`
 	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`
 	Namespaces              NamespacesConfig   `yaml:"namespaces"`
 	Build                   BuildConfig        `yaml:"build"`
@@ -95,6 +96,11 @@ type BuildConfig struct {
 	Policy  string   `yaml:"policy"`
 	// Allowed is used when Policy is "list": image name prefixes matched against the tag parameter.
 	Allowed []string `yaml:"allowed,omitempty"`
+}
+
+type SysctlsConfig struct {
+	DefaultAction string   `yaml:"default_action"` // "allow" or "deny" (default "deny")
+	Allowed       []string `yaml:"allowed,omitempty"`
 }
 
 type BindMountsConfig struct {
@@ -184,6 +190,13 @@ func (c *Config) validate() error {
 	}
 	if !isValidNamespace(c.Namespace) {
 		return fmt.Errorf("namespace must be 1-63 alphanumeric characters, hyphens, or underscores (starting with alphanumeric), got %q", c.Namespace)
+	}
+	sysctlAction := c.Audit.Sysctls.DefaultAction
+	if sysctlAction != "" && sysctlAction != "allow" && sysctlAction != "deny" {
+		return fmt.Errorf("audit.sysctls.default_action must be 'allow' or 'deny', got %q", sysctlAction)
+	}
+	if sysctlAction == "" {
+		c.Audit.Sysctls.DefaultAction = "deny"
 	}
 	action := c.Audit.BindMounts.DefaultAction
 	if action != "" && action != "allow" && action != "deny" {

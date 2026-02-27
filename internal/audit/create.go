@@ -71,6 +71,11 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		}
 	}
 
+	// Check sysctls
+	if denied, reason := cr.checkSysctls(&cfg.Audit.Sysctls); denied {
+		return &AuditResult{Denied: true, Reason: reason}, nil
+	}
+
 	// Check bind mounts
 	if denied, reason := cr.checkBindMounts(&cfg.Audit.BindMounts); denied {
 		return &AuditResult{Denied: true, Reason: reason}, nil
@@ -146,6 +151,37 @@ func (cr *CreateRequest) checkCapabilities(denied []string) (bool, string) {
 	for _, cap := range caps {
 		if _, found := deniedSet[strings.ToUpper(cap)]; found {
 			return true, fmt.Sprintf("capability %q is denied", cap)
+		}
+	}
+	return false, ""
+}
+
+func (cr *CreateRequest) checkSysctls(cfg *config.SysctlsConfig) (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["Sysctls"]
+	if !ok {
+		return false, ""
+	}
+	var sysctls map[string]string
+	if err := json.Unmarshal(raw, &sysctls); err != nil {
+		return true, "Sysctls field has invalid type"
+	}
+	if len(sysctls) == 0 {
+		return false, ""
+	}
+	if cfg.DefaultAction == "allow" {
+		return false, ""
+	}
+	// Default action is "deny": only allow sysctls in the allowlist
+	allowedSet := make(map[string]struct{}, len(cfg.Allowed))
+	for _, a := range cfg.Allowed {
+		allowedSet[a] = struct{}{}
+	}
+	for key := range sysctls {
+		if _, ok := allowedSet[key]; !ok {
+			return true, fmt.Sprintf("sysctl %q is denied", key)
 		}
 	}
 	return false, ""

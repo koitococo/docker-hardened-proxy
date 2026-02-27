@@ -600,3 +600,59 @@ func TestAuditCreatePreservesUnknownFields(t *testing.T) {
 		t.Error("Env field missing")
 	}
 }
+
+func TestAuditCreateSysctlsDenied(t *testing.T) {
+	cfg := testConfig()
+	// default_action defaults to "deny"
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Sysctls":{"net.ipv4.ip_forward":"1"}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for non-allowlisted sysctl")
+	}
+}
+
+func TestAuditCreateSysctlsAllowlisted(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Sysctls.DefaultAction = "deny"
+	cfg.Audit.Sysctls.Allowed = []string{"net.ipv4.ping_group_range"}
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Sysctls":{"net.ipv4.ping_group_range":"0 2147483647"}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("allowlisted sysctl should be allowed")
+	}
+}
+
+func TestAuditCreateSysctlsAllowAll(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Sysctls.DefaultAction = "allow"
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Sysctls":{"kernel.core_pattern":"|/exploit"}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("should be allowed when default_action is allow")
+	}
+}
+
+func TestAuditCreateSysctlsEmpty(t *testing.T) {
+	cfg := testConfig()
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Sysctls":{}}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("empty sysctls should be allowed")
+	}
+}
