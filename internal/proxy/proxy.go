@@ -24,10 +24,15 @@ type Handler struct {
 
 // New creates a new proxy Handler.
 func New(cfg *config.Config, dockerClient docker.Client, logger *slog.Logger) *Handler {
-	transport := NewUpstreamTransport(cfg.Upstream.Network, cfg.Upstream.Address)
+	transport := NewUpstreamTransport(cfg.Upstream.Network, cfg.Upstream.Address, cfg.Upstream.TLSConfig)
+
+	scheme := "http"
+	if cfg.Upstream.TLSConfig != nil {
+		scheme = "https"
+	}
 
 	director := func(req *http.Request) {
-		req.URL.Scheme = "http"
+		req.URL.Scheme = scheme
 		req.URL.Host = "docker"
 	}
 

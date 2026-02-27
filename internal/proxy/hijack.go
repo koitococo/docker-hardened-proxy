@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"io"
 	"net"
 	"net/http"
@@ -19,11 +20,31 @@ func isUpgradeRequest(r *http.Request) bool {
 // copies data bidirectionally.
 func (h *Handler) hijackProxy(w http.ResponseWriter, r *http.Request) {
 	// Dial upstream Docker daemon
-	upstreamConn, err := net.Dial(h.cfg.Upstream.Network, h.cfg.Upstream.Address)
+	rawConn, err := net.Dial(h.cfg.Upstream.Network, h.cfg.Upstream.Address)
 	if err != nil {
 		h.logger.Error("failed to dial upstream for hijack", "error", err)
 		http.Error(w, "upstream connection failed", http.StatusBadGateway)
 		return
+	}
+
+	// Wrap with TLS if configured
+	var upstreamConn net.Conn = rawConn
+	if h.cfg.Upstream.TLSConfig != nil {
+		cfg := h.cfg.Upstream.TLSConfig.Clone()
+		if cfg.ServerName == "" {
+			host, _, _ := net.SplitHostPort(h.cfg.Upstream.Address)
+			if host != "" {
+				cfg.ServerName = host
+			}
+		}
+		tlsConn := tls.Client(rawConn, cfg)
+		if err := tlsConn.Handshake(); err != nil {
+			rawConn.Close()
+			h.logger.Error("TLS handshake failed for hijack", "error", err)
+			http.Error(w, "upstream TLS handshake failed", http.StatusBadGateway)
+			return
+		}
+		upstreamConn = tlsConn
 	}
 	defer upstreamConn.Close()
 
@@ -56,25 +77,24 @@ func (h *Handler) hijackProxy(w http.ResponseWriter, r *http.Request) {
 	go func() {
 		defer wg.Done()
 		io.Copy(upstreamConn, clientConn)
-		// Signal upstream that client is done writing
-		if tc, ok := upstreamConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
-		} else if uc, ok := upstreamConn.(*net.UnixConn); ok {
-			uc.CloseWrite()
-		}
+		closeWrite(upstreamConn)
 	}()
 
 	go func() {
 		defer wg.Done()
 		io.Copy(clientConn, upstreamConn)
-		// Signal client that upstream is done writing
-		if tc, ok := clientConn.(*net.TCPConn); ok {
-			tc.CloseWrite()
-		}
-		if uc, ok := clientConn.(*net.UnixConn); ok {
-			uc.CloseWrite()
-		}
+		closeWrite(clientConn)
 	}()
 
 	wg.Wait()
+}
+
+// closeWrite signals half-close on connections that support it.
+func closeWrite(c net.Conn) {
+	type halfCloser interface {
+		CloseWrite() error
+	}
+	if hc, ok := c.(halfCloser); ok {
+		hc.CloseWrite()
+	}
 }

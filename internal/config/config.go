@@ -1,6 +1,8 @@
 package config
 
 import (
+	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"net/url"
 	"os"
@@ -31,10 +33,18 @@ type UnixListenerConfig struct {
 }
 
 type UpstreamConfig struct {
-	URL string `yaml:"url"`
+	URL string             `yaml:"url"`
+	TLS *UpstreamTLSConfig `yaml:"tls,omitempty"`
 	// Parsed fields (not from YAML)
-	Network string `yaml:"-"` // "unix" or "tcp"
-	Address string `yaml:"-"` // socket path or host:port
+	Network   string      `yaml:"-"` // "unix" or "tcp"
+	Address   string      `yaml:"-"` // socket path or host:port
+	TLSConfig *tls.Config `yaml:"-"` // nil when plaintext
+}
+
+type UpstreamTLSConfig struct {
+	CA   string `yaml:"ca"`   // path to CA cert PEM
+	Cert string `yaml:"cert"` // path to client cert PEM
+	Key  string `yaml:"key"`  // path to client key PEM
 }
 
 type AuditConfig struct {
@@ -117,6 +127,13 @@ func (c *Config) validate() error {
 	default:
 		return fmt.Errorf("upstream.url scheme must be unix:// or tcp://, got %q", u.Scheme)
 	}
+	if c.Upstream.TLS != nil {
+		tlsCfg, err := buildTLSConfig(c.Upstream.TLS)
+		if err != nil {
+			return fmt.Errorf("upstream.tls: %w", err)
+		}
+		c.Upstream.TLSConfig = tlsCfg
+	}
 	if c.Namespace == "" {
 		c.Namespace = "default"
 	}
@@ -144,4 +161,32 @@ func (c *Config) validate() error {
 		c.Logging.Format = "json"
 	}
 	return nil
+}
+
+func buildTLSConfig(cfg *UpstreamTLSConfig) (*tls.Config, error) {
+	tlsCfg := &tls.Config{}
+
+	if cfg.CA != "" {
+		caCert, err := os.ReadFile(cfg.CA)
+		if err != nil {
+			return nil, fmt.Errorf("reading ca %q: %w", cfg.CA, err)
+		}
+		pool := x509.NewCertPool()
+		if !pool.AppendCertsFromPEM(caCert) {
+			return nil, fmt.Errorf("ca %q contains no valid certificates", cfg.CA)
+		}
+		tlsCfg.RootCAs = pool
+	}
+
+	if cfg.Cert != "" && cfg.Key != "" {
+		cert, err := tls.LoadX509KeyPair(cfg.Cert, cfg.Key)
+		if err != nil {
+			return nil, fmt.Errorf("loading client cert/key: %w", err)
+		}
+		tlsCfg.Certificates = []tls.Certificate{cert}
+	} else if cfg.Cert != "" || cfg.Key != "" {
+		return nil, fmt.Errorf("both cert and key must be specified together")
+	}
+
+	return tlsCfg, nil
 }

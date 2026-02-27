@@ -134,6 +134,55 @@ listeners:
 	}
 }
 
+func TestParseNoTLSConfig(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Upstream.TLSConfig != nil {
+		t.Error("TLSConfig should be nil when tls section is absent")
+	}
+}
+
+func TestParseTLSCertOnly(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "tcp://host:2376"
+  tls:
+    cert: "/some/cert.pem"
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected error when cert is set without key")
+	}
+}
+
+func TestParseTLSBadCA(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "tcp://host:2376"
+  tls:
+    ca: "/nonexistent/ca.pem"
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected error for nonexistent CA file")
+	}
+}
+
 func TestParseUpstreamTCP(t *testing.T) {
 	data := []byte(`
 listeners:

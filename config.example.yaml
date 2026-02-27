@@ -8,6 +8,11 @@ listeners:
 upstream:
   # unix:///path/to/docker.sock or tcp://host:port
   url: "unix:///var/run/docker.sock"
+  # Optional TLS config for tcp:// upstream (when daemon uses HTTPS)
+  # tls:
+  #   ca: "/path/to/ca.pem"
+  #   cert: "/path/to/cert.pem"
+  #   key: "/path/to/key.pem"
 
 namespace: "default"
 

@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"crypto/tls"
+	"net/http"
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
@@ -17,11 +19,23 @@ type Client interface {
 // NewClient creates a Docker client connecting to the specified upstream.
 // host should be a Docker-style host string, e.g. "unix:///var/run/docker.sock"
 // or "tcp://127.0.0.1:2375".
-func NewClient(host string) (Client, error) {
-	cli, err := client.NewClientWithOpts(
+// If tlsCfg is non-nil, the client uses HTTPS with the given TLS configuration.
+func NewClient(host string, tlsCfg *tls.Config) (Client, error) {
+	opts := []client.Opt{
 		client.WithHost(host),
 		client.WithAPIVersionNegotiation(),
-	)
+	}
+
+	if tlsCfg != nil {
+		httpClient := &http.Client{
+			Transport: &http.Transport{
+				TLSClientConfig: tlsCfg,
+			},
+		}
+		opts = append(opts, client.WithHTTPClient(httpClient), client.WithScheme("https"))
+	}
+
+	cli, err := client.NewClientWithOpts(opts...)
 	if err != nil {
 		return nil, err
 	}

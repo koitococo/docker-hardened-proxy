@@ -1,2 +1,3 @@
 /docker-hardened-proxy
 *.exe
+config.yaml
