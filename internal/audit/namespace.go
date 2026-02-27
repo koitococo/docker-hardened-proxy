@@ -24,7 +24,7 @@ func CheckContainer(ctx context.Context, client docker.Client, containerID, name
 	}
 
 	if ns != namespace {
-		return fmt.Errorf("container %s belongs to namespace %q, not %q", containerID, ns, namespace)
+		return fmt.Errorf("container %s does not belong to this namespace", containerID)
 	}
 
 	return nil
