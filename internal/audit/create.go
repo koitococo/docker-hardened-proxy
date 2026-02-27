@@ -229,6 +229,17 @@ func (cr *CreateRequest) checkBindMounts(cfg *config.BindMountsConfig) (bool, st
 	return false, ""
 }
 
+// matchesPathPrefix checks if source starts with prefix at a path component boundary.
+// e.g., "/home/ubuntu" matches "/home/ubuntu/code" but NOT "/home/ubuntuevil".
+func matchesPathPrefix(source, prefix string) bool {
+	prefix = strings.TrimRight(prefix, "/")
+	if !strings.HasPrefix(source, prefix) {
+		return false
+	}
+	// Exact match or next char is a path separator
+	return len(source) == len(prefix) || source[len(prefix)] == '/'
+}
+
 // matchBindRule checks a bind mount source against configured rules.
 // Uses longest-prefix-match semantics so more specific rules always win.
 // Returns (allowed, rewrittenPath).
@@ -238,7 +249,7 @@ func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
 	bestIdx := -1
 	bestLen := 0
 	for i, rule := range cfg.Rules {
-		if strings.HasPrefix(source, rule.SourcePrefix) && len(rule.SourcePrefix) > bestLen {
+		if matchesPathPrefix(source, rule.SourcePrefix) && len(rule.SourcePrefix) > bestLen {
 			bestIdx = i
 			bestLen = len(rule.SourcePrefix)
 		}

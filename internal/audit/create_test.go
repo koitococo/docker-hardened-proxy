@@ -261,6 +261,10 @@ func TestMatchBindRule(t *testing.T) {
 		{"/tmp/data", true, "/tmp/data"},
 		{"/var/log/syslog", false, "/var/log/syslog"},
 		{"/etc/passwd", false, "/etc/passwd"},
+		// Path boundary: sibling dirs sharing string prefix must NOT match
+		{"/home/ubuntuevil", false, "/home/ubuntuevil"},
+		{"/home/ubuntu2/secrets", false, "/home/ubuntu2/secrets"},
+		{"/tmp2", false, "/tmp2"},
 	}
 
 	for _, tt := range tests {
