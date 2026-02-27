@@ -212,6 +212,7 @@ func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	// Restore body for forwarding
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 
 	h.forward(w, r)
 }
