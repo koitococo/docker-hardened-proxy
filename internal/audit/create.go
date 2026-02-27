@@ -75,6 +75,11 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		return &AuditResult{Denied: true, Reason: reason}, nil
 	}
 
+	// Check namespace modes
+	if denied, reason := cr.checkNamespaceModes(&cfg.Audit.Namespaces); denied {
+		return &AuditResult{Denied: true, Reason: reason}, nil
+	}
+
 	// Inject namespace labels
 	cr.injectLabels(cfg.Namespace)
 
@@ -221,6 +226,42 @@ func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
 	}
 	// No rule matched — use default action
 	return cfg.DefaultAction == "allow", source
+}
+
+func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+
+	checks := []struct {
+		field    string
+		denyHost bool
+		name     string
+	}{
+		{"NetworkMode", cfg.NetworkMode.DenyHost, "NetworkMode"},
+		{"IpcMode", cfg.IPCMode.DenyHost, "IpcMode"},
+		{"PidMode", cfg.PIDMode.DenyHost, "PidMode"},
+		{"UTSMode", cfg.UTSMode.DenyHost, "UTSMode"},
+	}
+
+	for _, check := range checks {
+		if !check.denyHost {
+			continue
+		}
+		raw, ok := cr.hostConfig[check.field]
+		if !ok {
+			continue
+		}
+		var mode string
+		if err := json.Unmarshal(raw, &mode); err != nil {
+			continue
+		}
+		if mode == "host" {
+			return true, fmt.Sprintf("%s=host is denied", check.name)
+		}
+	}
+
+	return false, ""
 }
 
 func (cr *CreateRequest) injectLabels(namespace string) {

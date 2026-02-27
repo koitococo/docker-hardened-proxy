@@ -276,6 +276,90 @@ func TestMatchBindRule(t *testing.T) {
 	}
 }
 
+func TestAuditCreateNetworkModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"NetworkMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for NetworkMode=host")
+	}
+}
+
+func TestAuditCreateNetworkModeBridge(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"NetworkMode":"bridge"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("bridge mode should be allowed")
+	}
+}
+
+func TestAuditCreatePidModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.PIDMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"PidMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for PidMode=host")
+	}
+}
+
+func TestAuditCreateIpcModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.IPCMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"IpcMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for IpcMode=host")
+	}
+}
+
+func TestAuditCreateUTSModeHostDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.UTSMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"UTSMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for UTSMode=host")
+	}
+}
+
+func TestAuditCreateNamespaceModeNotDenied(t *testing.T) {
+	cfg := testConfig()
+	// All deny_host flags are false by default
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"NetworkMode":"host","PidMode":"host"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("should not deny when deny_host is false")
+	}
+}
+
 func TestAuditCreatePreservesUnknownFields(t *testing.T) {
 	body := []byte(`{"Image":"alpine","Cmd":["echo","hello"],"Env":["FOO=bar"]}`)
 	result, err := AuditCreate(body, testConfig())
