@@ -61,12 +61,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch info.Kind {
 	case route.ContainerCreate:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		h.handleContainerCreate(w, r)
 		return
 	case route.ContainerList:
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		h.handleContainerList(w, r)
 		return
 	case route.ExecCreate:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
 		if err := h.checkNamespace(r, info); err != nil {
 			h.logger.Warn("denied",
 				"endpoint", info.Kind.String(),
