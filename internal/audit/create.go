@@ -304,6 +304,13 @@ func matchesPathPrefix(source, prefix string) bool {
 // matchBindRule checks a bind mount source against configured rules.
 // Uses longest-prefix-match semantics so more specific rules always win.
 // Returns (allowed, rewrittenPath).
+//
+// NOTE: This function operates on string paths only and does not resolve
+// symlinks. If a user has write access to an allowed directory, they can
+// create symlinks that escape the intended boundary. Using rewrite_prefix
+// mitigates this since Docker uses the rewritten path (which won't contain
+// the attacker's symlink). For allow-without-rewrite rules, ensure the
+// allowed directory is not writable by untrusted users.
 func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
 	source = path.Clean(source)
 
