@@ -8,7 +8,11 @@ import (
 
 func TestInjectNamespaceFilterEmpty(t *testing.T) {
 	query := url.Values{}
-	result := InjectNamespaceFilter(query, "testns")
+	result, warning := InjectNamespaceFilter(query, "testns")
+
+	if warning != "" {
+		t.Errorf("unexpected warning: %s", warning)
+	}
 
 	var filters map[string][]string
 	if err := json.Unmarshal([]byte(result.Get("filters")), &filters); err != nil {
@@ -35,7 +39,11 @@ func TestInjectNamespaceFilterMerge(t *testing.T) {
 	query.Set("filters", string(encoded))
 	query.Set("all", "true")
 
-	result := InjectNamespaceFilter(query, "myns")
+	result, warning := InjectNamespaceFilter(query, "myns")
+
+	if warning != "" {
+		t.Errorf("unexpected warning: %s", warning)
+	}
 
 	// Preserve other query params
 	if result.Get("all") != "true" {
@@ -73,7 +81,11 @@ func TestInjectNamespaceFilterInvalidExisting(t *testing.T) {
 	query := url.Values{}
 	query.Set("filters", "not-valid-json")
 
-	result := InjectNamespaceFilter(query, "testns")
+	result, warning := InjectNamespaceFilter(query, "testns")
+
+	if warning == "" {
+		t.Error("expected warning for malformed filters")
+	}
 
 	var filters map[string][]string
 	if err := json.Unmarshal([]byte(result.Get("filters")), &filters); err != nil {

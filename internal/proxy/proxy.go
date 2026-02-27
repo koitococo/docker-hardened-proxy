@@ -177,7 +177,11 @@ func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) erro
 
 func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	h.logger.Debug("injecting namespace filter", "namespace", h.cfg.Namespace)
-	r.URL.RawQuery = audit.InjectNamespaceFilter(r.URL.Query(), h.cfg.Namespace).Encode()
+	query, warning := audit.InjectNamespaceFilter(r.URL.Query(), h.cfg.Namespace)
+	if warning != "" {
+		h.logger.Warn("filter warning", "warning", warning)
+	}
+	r.URL.RawQuery = query.Encode()
 	h.forward(w, r)
 }
 
