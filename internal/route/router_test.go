@@ -41,12 +41,27 @@ func TestParse(t *testing.T) {
 		{"/exec/def456/json", ExecOp, "def456", "/exec/def456/json"},
 		{"/exec/def456/resize", ExecOp, "def456", "/exec/def456/resize"},
 
-		// Passthrough
+		// Passthrough (allowlisted)
 		{"/images/json", Passthrough, "", "/images/json"},
 		{"/v1.41/images/json", Passthrough, "", "/images/json"},
+		{"/images/create", Passthrough, "", "/images/create"},
+		{"/images/abc123/json", Passthrough, "", "/images/abc123/json"},
+		{"/images/abc123/tag", Passthrough, "", "/images/abc123/tag"},
 		{"/version", Passthrough, "", "/version"},
 		{"/info", Passthrough, "", "/info"},
+		{"/_ping", Passthrough, "", "/_ping"},
 		{"/", Passthrough, "", "/"},
+
+		// Denied (dangerous endpoints)
+		{"/build", Denied, "", "/build"},
+		{"/commit", Denied, "", "/commit"},
+		{"/events", Denied, "", "/events"},
+		{"/volumes/create", Denied, "", "/volumes/create"},
+		{"/networks/create", Denied, "", "/networks/create"},
+		{"/swarm/init", Denied, "", "/swarm/init"},
+		{"/services/create", Denied, "", "/services/create"},
+		{"/images/prune", Denied, "", "/images/prune"},
+		{"/v1.41/build", Denied, "", "/build"},
 	}
 
 	for _, tt := range tests {
@@ -99,6 +114,7 @@ func TestEndpointKindString(t *testing.T) {
 		{ContainerList, "container_list"},
 		{ExecCreate, "exec_create"},
 		{ExecOp, "exec_op"},
+		{Denied, "denied"},
 	}
 	for _, tt := range tests {
 		if got := tt.kind.String(); got != tt.want {

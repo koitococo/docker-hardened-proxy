@@ -86,6 +86,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
 			return
 		}
+	case route.Denied:
+		h.logger.Warn("denied",
+			"endpoint", info.Kind.String(),
+			"path", r.URL.Path,
+			"reason", "endpoint not allowed",
+		)
+		http.Error(w, "denied: endpoint not allowed", http.StatusForbidden)
+		return
 	}
 
 	h.logger.Debug("forwarding",

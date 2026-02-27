@@ -37,18 +37,18 @@ func Parse(path string) RouteInfo {
 		parts = parts[1:]
 	}
 
-	if len(parts) == 0 {
-		return info
+	if len(parts) == 0 || parts[0] == "" {
+		return info // root path is passthrough
 	}
 
 	switch parts[0] {
 	case "containers":
-		info = parseContainerRoute(parts[1:], info)
+		return parseContainerRoute(parts[1:], info)
 	case "exec":
-		info = parseExecRoute(parts[1:], info)
+		return parseExecRoute(parts[1:], info)
+	default:
+		return classifyTopLevel(parts, info)
 	}
-
-	return info
 }
 
 func parseContainerRoute(parts []string, info RouteInfo) RouteInfo {
@@ -101,6 +101,58 @@ func parseExecRoute(parts []string, info RouteInfo) RouteInfo {
 	// /exec/{id}/...
 	info.ID = parts[0]
 	info.Kind = ExecOp
+	return info
+}
+
+// safePassthroughPaths is the allowlist of top-level Docker API paths that are
+// safe to forward without auditing. All other paths default to Denied.
+var safePassthroughPaths = map[string]bool{
+	"_ping":   true,
+	"version": true,
+	"info":    true,
+}
+
+// safePassthroughPrefixes covers paths like /images/json, /images/{id}/json, /images/{id}/tag, /images/create.
+var safeImageActions = map[string]bool{
+	"json":   true,
+	"create": true,
+}
+
+var safeImageIDActions = map[string]bool{
+	"json": true,
+	"tag":  true,
+}
+
+func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
+	// Single-segment paths: /_ping, /version, /info
+	if len(parts) == 1 {
+		if safePassthroughPaths[parts[0]] {
+			return info // Kind remains Passthrough
+		}
+		info.Kind = Denied
+		return info
+	}
+
+	// /images/* allowlist
+	if parts[0] == "images" {
+		if len(parts) == 2 {
+			// /images/json (list), /images/create (pull)
+			if safeImageActions[parts[1]] {
+				return info
+			}
+		}
+		if len(parts) == 3 {
+			// /images/{id}/json (inspect), /images/{id}/tag
+			if safeImageIDActions[parts[2]] {
+				return info
+			}
+		}
+		info.Kind = Denied
+		return info
+	}
+
+	// Everything else is denied
+	info.Kind = Denied
 	return info
 }
 
