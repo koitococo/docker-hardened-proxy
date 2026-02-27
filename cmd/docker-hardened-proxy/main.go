@@ -15,10 +15,19 @@ import (
 )
 
 func main() {
-	configPath := flag.String("config", "config.yaml", "path to config file")
+	configPath := flag.String("config", "", "path to config file")
 	flag.Parse()
 
-	cfg, err := config.Load(*configPath)
+	path := *configPath
+	if path == "" {
+		path = config.Search()
+		if path == "" {
+			slog.Error("no config file found", "search_paths", config.SearchPaths)
+			os.Exit(1)
+		}
+	}
+
+	cfg, err := config.Load(path)
 	if err != nil {
 		slog.Error("failed to load config", "error", err)
 		os.Exit(1)

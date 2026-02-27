@@ -6,9 +6,41 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 
 	"gopkg.in/yaml.v3"
 )
+
+// SearchPaths returns the ordered list of config file paths to try
+// when no explicit path is given.
+var SearchPaths = []string{
+	"./config.yaml",
+	filepath.Join(homeDir(), ".config", "docker-hardened-proxy", "config.yaml"),
+	"/etc/docker-hardened-proxy/config.yaml",
+	"/usr/local/lib/docker-hardened-proxy/config.yaml",
+	"/usr/lib/docker-hardened-proxy/config.yaml",
+}
+
+func homeDir() string {
+	if h, err := os.UserHomeDir(); err == nil {
+		return h
+	}
+	return ""
+}
+
+// Search tries each path in SearchPaths and returns the first one that exists.
+// It returns an empty string if none are found.
+func Search() string {
+	for _, p := range SearchPaths {
+		if p == "" {
+			continue
+		}
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
+}
 
 type Config struct {
 	Listeners ListenersConfig `yaml:"listeners"`
