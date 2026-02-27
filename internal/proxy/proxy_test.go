@@ -42,7 +42,7 @@ func (m *mockDocker) ContainerExecInspect(_ context.Context, id string) (contain
 func testCfg() *config.Config {
 	return &config.Config{
 		Namespace: "testns",
-		Upstream:  config.UpstreamConfig{Socket: "/var/run/docker.sock"},
+		Upstream:  config.UpstreamConfig{URL: "unix:///var/run/docker.sock", Network: "unix", Address: "/var/run/docker.sock"},
 		Audit: config.AuditConfig{
 			DenyPrivileged:     true,
 			DeniedCapabilities: []string{"ALL", "SYS_ADMIN"},

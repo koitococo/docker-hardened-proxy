@@ -26,7 +26,7 @@ func main() {
 
 	logger := setupLogger(cfg)
 
-	dockerClient, err := docker.NewClient(cfg.Upstream.Socket)
+	dockerClient, err := docker.NewClient(cfg.Upstream.URL)
 	if err != nil {
 		logger.Error("failed to create docker client", "error", err)
 		os.Exit(1)

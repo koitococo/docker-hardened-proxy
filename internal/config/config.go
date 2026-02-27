@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 
 	"gopkg.in/yaml.v3"
@@ -30,7 +31,10 @@ type UnixListenerConfig struct {
 }
 
 type UpstreamConfig struct {
-	Socket string `yaml:"socket"`
+	URL string `yaml:"url"`
+	// Parsed fields (not from YAML)
+	Network string `yaml:"-"` // "unix" or "tcp"
+	Address string `yaml:"-"` // socket path or host:port
 }
 
 type AuditConfig struct {
@@ -90,8 +94,28 @@ func (c *Config) validate() error {
 	if c.Listeners.TCP == nil && c.Listeners.Unix == nil {
 		return fmt.Errorf("at least one listener (tcp or unix) must be configured")
 	}
-	if c.Upstream.Socket == "" {
-		return fmt.Errorf("upstream.socket is required")
+	if c.Upstream.URL == "" {
+		return fmt.Errorf("upstream.url is required")
+	}
+	u, err := url.Parse(c.Upstream.URL)
+	if err != nil {
+		return fmt.Errorf("upstream.url is invalid: %w", err)
+	}
+	switch u.Scheme {
+	case "unix":
+		c.Upstream.Network = "unix"
+		c.Upstream.Address = u.Path
+		if c.Upstream.Address == "" {
+			return fmt.Errorf("upstream.url unix:// requires a path")
+		}
+	case "tcp":
+		c.Upstream.Network = "tcp"
+		c.Upstream.Address = u.Host
+		if c.Upstream.Address == "" {
+			return fmt.Errorf("upstream.url tcp:// requires host:port")
+		}
+	default:
+		return fmt.Errorf("upstream.url scheme must be unix:// or tcp://, got %q", u.Scheme)
 	}
 	if c.Namespace == "" {
 		c.Namespace = "default"

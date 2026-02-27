@@ -6,7 +6,8 @@ listeners:
     mode: 0660
 
 upstream:
-  socket: "/var/run/docker.sock"
+  # unix:///path/to/docker.sock or tcp://host:port
+  url: "unix:///var/run/docker.sock"
 
 namespace: "default"
 

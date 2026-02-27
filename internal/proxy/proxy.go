@@ -24,7 +24,7 @@ type Handler struct {
 
 // New creates a new proxy Handler.
 func New(cfg *config.Config, dockerClient docker.Client, logger *slog.Logger) *Handler {
-	transport := NewUnixTransport(cfg.Upstream.Socket)
+	transport := NewUpstreamTransport(cfg.Upstream.Network, cfg.Upstream.Address)
 
 	director := func(req *http.Request) {
 		req.URL.Scheme = "http"

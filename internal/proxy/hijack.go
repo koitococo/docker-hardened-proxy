@@ -18,8 +18,8 @@ func isUpgradeRequest(r *http.Request) bool {
 // It hijacks both the client connection and the upstream connection, then
 // copies data bidirectionally.
 func (h *Handler) hijackProxy(w http.ResponseWriter, r *http.Request) {
-	// Dial upstream Docker socket
-	upstreamConn, err := net.Dial("unix", h.cfg.Upstream.Socket)
+	// Dial upstream Docker daemon
+	upstreamConn, err := net.Dial(h.cfg.Upstream.Network, h.cfg.Upstream.Address)
 	if err != nil {
 		h.logger.Error("failed to dial upstream for hijack", "error", err)
 		http.Error(w, "upstream connection failed", http.StatusBadGateway)
@@ -57,8 +57,10 @@ func (h *Handler) hijackProxy(w http.ResponseWriter, r *http.Request) {
 		defer wg.Done()
 		io.Copy(upstreamConn, clientConn)
 		// Signal upstream that client is done writing
-		if tc, ok := upstreamConn.(*net.UnixConn); ok {
+		if tc, ok := upstreamConn.(*net.TCPConn); ok {
 			tc.CloseWrite()
+		} else if uc, ok := upstreamConn.(*net.UnixConn); ok {
+			uc.CloseWrite()
 		}
 	}()
 

@@ -13,7 +13,7 @@ listeners:
     path: "/var/run/docker-proxy.sock"
     mode: 0660
 upstream:
-  socket: "/var/run/docker.sock"
+  url: "unix:///var/run/docker.sock"
 namespace: "myns"
 audit:
   deny_privileged: true
@@ -43,8 +43,14 @@ logging:
 	if cfg.Listeners.Unix.Path != "/var/run/docker-proxy.sock" {
 		t.Errorf("unix path = %q", cfg.Listeners.Unix.Path)
 	}
-	if cfg.Upstream.Socket != "/var/run/docker.sock" {
-		t.Errorf("upstream socket = %q", cfg.Upstream.Socket)
+	if cfg.Upstream.URL != "unix:///var/run/docker.sock" {
+		t.Errorf("upstream url = %q", cfg.Upstream.URL)
+	}
+	if cfg.Upstream.Network != "unix" {
+		t.Errorf("upstream network = %q, want %q", cfg.Upstream.Network, "unix")
+	}
+	if cfg.Upstream.Address != "/var/run/docker.sock" {
+		t.Errorf("upstream address = %q", cfg.Upstream.Address)
 	}
 	if cfg.Namespace != "myns" {
 		t.Errorf("namespace = %q, want %q", cfg.Namespace, "myns")
@@ -85,7 +91,7 @@ listeners:
   tcp:
     address: ":2375"
 upstream:
-  socket: "/var/run/docker.sock"
+  url: "unix:///var/run/docker.sock"
 `)
 	cfg, err := Parse(data)
 	if err != nil {
@@ -108,7 +114,7 @@ upstream:
 func TestParseNoListener(t *testing.T) {
 	data := []byte(`
 upstream:
-  socket: "/var/run/docker.sock"
+  url: "unix:///var/run/docker.sock"
 `)
 	_, err := Parse(data)
 	if err == nil {
@@ -128,13 +134,47 @@ listeners:
 	}
 }
 
+func TestParseUpstreamTCP(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "tcp://192.168.1.100:2375"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Upstream.Network != "tcp" {
+		t.Errorf("network = %q, want %q", cfg.Upstream.Network, "tcp")
+	}
+	if cfg.Upstream.Address != "192.168.1.100:2375" {
+		t.Errorf("address = %q, want %q", cfg.Upstream.Address, "192.168.1.100:2375")
+	}
+}
+
+func TestParseUpstreamInvalidScheme(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "http://localhost:2375"
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected error for http:// scheme")
+	}
+}
+
 func TestParseInvalidBindAction(t *testing.T) {
 	data := []byte(`
 listeners:
   tcp:
     address: ":2375"
 upstream:
-  socket: "/var/run/docker.sock"
+  url: "unix:///var/run/docker.sock"
 audit:
   bind_mounts:
     default_action: "invalid"
@@ -151,7 +191,7 @@ listeners:
   tcp:
     address: ":2375"
 upstream:
-  socket: "/var/run/docker.sock"
+  url: "unix:///var/run/docker.sock"
 audit:
   bind_mounts:
     default_action: "deny"
