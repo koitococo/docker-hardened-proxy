@@ -163,8 +163,8 @@ const maxCreateBodySize = 10 << 20
 
 func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
-	r.Body.Close()
 	if err != nil {
 		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
@@ -195,8 +195,8 @@ func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)
+	defer r.Body.Close()
 	body, err := io.ReadAll(r.Body)
-	r.Body.Close()
 	if err != nil {
 		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
