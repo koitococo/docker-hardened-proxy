@@ -51,20 +51,27 @@ func Parse(path string) RouteInfo {
 	}
 }
 
+// containerKeywords are path segments under /containers/ that are API endpoints,
+// not container IDs. These must be matched before falling through to {id} handling.
+var containerKeywords = map[string]EndpointKind{
+	"create": ContainerCreate,
+	"json":   ContainerList,
+	"prune":  Denied,
+}
+
 func parseContainerRoute(parts []string, info RouteInfo) RouteInfo {
 	if len(parts) == 0 {
 		return info
 	}
 
-	// /containers/create
-	if parts[0] == "create" {
-		info.Kind = ContainerCreate
-		return info
-	}
-
-	// /containers/json — list
-	if parts[0] == "json" {
-		info.Kind = ContainerList
+	// Check for keyword endpoints before treating as container ID
+	if kind, ok := containerKeywords[parts[0]]; ok {
+		if len(parts) == 1 {
+			info.Kind = kind
+			return info
+		}
+		// /containers/json/something or /containers/create/something — invalid
+		info.Kind = Denied
 		return info
 	}
 
@@ -82,11 +89,8 @@ func parseContainerRoute(parts []string, info RouteInfo) RouteInfo {
 	case "exec":
 		// /containers/{id}/exec
 		info.Kind = ExecCreate
-	case "json":
-		// /containers/{id}/json — inspect
-		info.Kind = ContainerOp
 	default:
-		// /containers/{id}/start, stop, kill, restart, etc.
+		// /containers/{id}/start, stop, kill, restart, json, etc.
 		info.Kind = ContainerOp
 	}
 

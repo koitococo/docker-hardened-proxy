@@ -41,6 +41,10 @@ func TestParse(t *testing.T) {
 		{"/exec/def456/json", ExecOp, "def456", "/exec/def456/json"},
 		{"/exec/def456/resize", ExecOp, "def456", "/exec/def456/resize"},
 
+		// Container prune (denied)
+		{"/containers/prune", Denied, "", "/containers/prune"},
+		{"/v1.41/containers/prune", Denied, "", "/containers/prune"},
+
 		// Passthrough (allowlisted)
 		{"/images/json", Passthrough, "", "/images/json"},
 		{"/v1.41/images/json", Passthrough, "", "/images/json"},
