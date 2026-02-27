@@ -68,6 +68,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	h.forward(w, r)
+}
+
+func (h *Handler) forward(w http.ResponseWriter, r *http.Request) {
+	if isUpgradeRequest(r) {
+		h.hijackProxy(w, r)
+		return
+	}
 	h.reverse.ServeHTTP(w, r)
 }
 
@@ -87,7 +95,7 @@ func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) erro
 
 func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	r.URL.RawQuery = audit.InjectNamespaceFilter(r.URL.Query(), h.cfg.Namespace).Encode()
-	h.reverse.ServeHTTP(w, r)
+	h.forward(w, r)
 }
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
@@ -116,5 +124,5 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 	r.ContentLength = int64(len(result.Body))
 	r.Header.Set("Content-Length", strconv.Itoa(len(result.Body)))
 
-	h.reverse.ServeHTTP(w, r)
+	h.forward(w, r)
 }
