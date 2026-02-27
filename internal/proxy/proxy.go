@@ -134,11 +134,15 @@ func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	h.forward(w, r)
 }
 
+// maxCreateBodySize is the maximum allowed request body size for container create (10MB).
+const maxCreateBodySize = 10 << 20
+
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)
 	body, err := io.ReadAll(r.Body)
 	r.Body.Close()
 	if err != nil {
-		http.Error(w, "failed to read request body", http.StatusBadRequest)
+		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
 		return
 	}
 
