@@ -141,6 +141,9 @@ func (c *Config) validate() error {
 	if c.Namespace == "" {
 		c.Namespace = "default"
 	}
+	if !isValidNamespace(c.Namespace) {
+		return fmt.Errorf("namespace must be 1-63 alphanumeric characters, hyphens, or underscores (starting with alphanumeric), got %q", c.Namespace)
+	}
 	action := c.Audit.BindMounts.DefaultAction
 	if action != "" && action != "allow" && action != "deny" {
 		return fmt.Errorf("audit.bind_mounts.default_action must be 'allow' or 'deny', got %q", action)
@@ -165,6 +168,23 @@ func (c *Config) validate() error {
 		c.Logging.Format = "json"
 	}
 	return nil
+}
+
+func isValidNamespace(s string) bool {
+	if len(s) == 0 || len(s) > 63 {
+		return false
+	}
+	for i, c := range s {
+		isAlnum := (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
+		isExtra := c == '-' || c == '_'
+		if i == 0 && !isAlnum {
+			return false
+		}
+		if !isAlnum && !isExtra {
+			return false
+		}
+	}
+	return true
 }
 
 func buildTLSConfig(cfg *UpstreamTLSConfig) (*tls.Config, error) {
