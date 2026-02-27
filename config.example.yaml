@@ -1,0 +1,37 @@
+listeners:
+  tcp:
+    address: "127.0.0.1:2375"
+  unix:
+    path: "/var/run/docker-proxy.sock"
+    mode: 0660
+
+upstream:
+  socket: "/var/run/docker.sock"
+
+namespace: "default"
+
+audit:
+  deny_privileged: true
+  denied_capabilities:
+    - "ALL"
+    - "SYS_ADMIN"
+    - "NET_ADMIN"
+  bind_mounts:
+    default_action: "deny"
+    rules:
+      - source_prefix: "/home/ubuntu"
+        rewrite_prefix: "/path/to/container/home/ubuntu"
+        action: "allow"
+  namespaces:
+    network_mode:
+      deny_host: true
+    ipc_mode:
+      deny_host: true
+    pid_mode:
+      deny_host: true
+    uts_mode:
+      deny_host: true
+
+logging:
+  level: "info"
+  format: "json"
