@@ -95,6 +95,20 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		}
 	}
 
+	// Check OomKillDisable
+	if cfg.Audit.DenyOomKillDisable {
+		if denied, reason := cr.checkOomKillDisable(); denied {
+			return &AuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
+	// Check PidsLimit
+	if cfg.Audit.DenyPidsLimitOverride {
+		if denied, reason := cr.checkPidsLimit(); denied {
+			return &AuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
 	// Check namespace modes
 	if denied, reason := cr.checkNamespaceModes(&cfg.Audit.Namespaces); denied {
 		return &AuditResult{Denied: true, Reason: reason}, nil
@@ -356,6 +370,42 @@ func (cr *CreateRequest) checkDevices() (bool, string) {
 	}
 	if len(devices) > 0 {
 		return true, "host device access is denied"
+	}
+	return false, ""
+}
+
+func (cr *CreateRequest) checkOomKillDisable() (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["OomKillDisable"]
+	if !ok {
+		return false, ""
+	}
+	var disabled bool
+	if err := json.Unmarshal(raw, &disabled); err != nil {
+		return true, "OomKillDisable field has invalid type"
+	}
+	if disabled {
+		return true, "OomKillDisable is denied"
+	}
+	return false, ""
+}
+
+func (cr *CreateRequest) checkPidsLimit() (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["PidsLimit"]
+	if !ok {
+		return false, ""
+	}
+	var limit int64
+	if err := json.Unmarshal(raw, &limit); err != nil {
+		return true, "PidsLimit field has invalid type"
+	}
+	if limit <= 0 {
+		return true, "unlimited PidsLimit is denied"
 	}
 	return false, ""
 }

@@ -656,3 +656,73 @@ func TestAuditCreateSysctlsEmpty(t *testing.T) {
 		t.Fatal("empty sysctls should be allowed")
 	}
 }
+
+func TestAuditCreateOomKillDisableDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyOomKillDisable = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"OomKillDisable":true}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for OomKillDisable=true")
+	}
+}
+
+func TestAuditCreateOomKillDisableAllowed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyOomKillDisable = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"OomKillDisable":false}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("OomKillDisable=false should be allowed")
+	}
+}
+
+func TestAuditCreatePidsLimitUnlimitedDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyPidsLimitOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"PidsLimit":-1}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for PidsLimit=-1 (unlimited)")
+	}
+}
+
+func TestAuditCreatePidsLimitZeroDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyPidsLimitOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"PidsLimit":0}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for PidsLimit=0 (unlimited)")
+	}
+}
+
+func TestAuditCreatePidsLimitPositiveAllowed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyPidsLimitOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"PidsLimit":1024}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("PidsLimit=1024 should be allowed")
+	}
+}
