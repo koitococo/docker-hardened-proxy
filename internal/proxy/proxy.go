@@ -47,6 +47,13 @@ func New(cfg *config.Config, dockerClient docker.Client, logger *slog.Logger) *H
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	info := route.Parse(r.URL.Path)
 
+	h.logger.Info("request",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"endpoint", info.Kind.String(),
+		"id", info.ID,
+	)
+
 	switch info.Kind {
 	case route.ContainerCreate:
 		h.handleContainerCreate(w, r)
@@ -56,23 +63,38 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case route.ContainerOp, route.ExecCreate:
 		if err := h.checkNamespace(r, info); err != nil {
-			h.logger.Warn("namespace check failed", "id", info.ID, "error", err)
+			h.logger.Warn("denied",
+				"endpoint", info.Kind.String(),
+				"id", info.ID,
+				"reason", err.Error(),
+			)
 			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
 			return
 		}
 	case route.ExecOp:
 		if err := h.checkExecNamespace(r, info); err != nil {
-			h.logger.Warn("exec namespace check failed", "id", info.ID, "error", err)
+			h.logger.Warn("denied",
+				"endpoint", info.Kind.String(),
+				"id", info.ID,
+				"reason", err.Error(),
+			)
 			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
 			return
 		}
 	}
+
+	h.logger.Debug("forwarding",
+		"method", r.Method,
+		"path", r.URL.Path,
+		"endpoint", info.Kind.String(),
+	)
 
 	h.forward(w, r)
 }
 
 func (h *Handler) forward(w http.ResponseWriter, r *http.Request) {
 	if isUpgradeRequest(r) {
+		h.logger.Debug("hijacking connection", "path", r.URL.Path)
 		h.hijackProxy(w, r)
 		return
 	}
@@ -94,6 +116,7 @@ func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) erro
 }
 
 func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
+	h.logger.Debug("injecting namespace filter", "namespace", h.cfg.Namespace)
 	r.URL.RawQuery = audit.InjectNamespaceFilter(r.URL.Query(), h.cfg.Namespace).Encode()
 	h.forward(w, r)
 }
@@ -106,6 +129,8 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	h.logger.Debug("auditing container create", "body_size", len(body))
+
 	result, err := audit.AuditCreate(body, h.cfg)
 	if err != nil {
 		h.logger.Error("audit error", "error", err)
@@ -114,10 +139,17 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if result.Denied {
-		h.logger.Warn("container create denied", "reason", result.Reason)
+		h.logger.Warn("denied",
+			"endpoint", "container_create",
+			"reason", result.Reason,
+		)
 		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
 		return
 	}
+
+	h.logger.Info("container create allowed",
+		"rewritten", result.Rewrite,
+	)
 
 	// Replace body with audited version
 	r.Body = io.NopCloser(bytes.NewReader(result.Body))
