@@ -86,6 +86,14 @@ type AuditConfig struct {
 	DeniedCapabilities      []string           `yaml:"denied_capabilities"`
 	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`
 	Namespaces              NamespacesConfig   `yaml:"namespaces"`
+	Build                   BuildConfig        `yaml:"build"`
+}
+
+type BuildConfig struct {
+	// Policy controls build access: "deny" (default), "allow", or "list".
+	Policy  string   `yaml:"policy"`
+	// Allowed is used when Policy is "list": image name prefixes matched against the tag parameter.
+	Allowed []string `yaml:"allowed,omitempty"`
 }
 
 type BindMountsConfig struct {
@@ -191,6 +199,16 @@ func (c *Config) validate() error {
 			return fmt.Errorf("audit.bind_mounts.rules[%d].action must be 'allow' or 'deny', got %q", i, rule.Action)
 		}
 	}
+	buildPolicy := c.Audit.Build.Policy
+	if buildPolicy == "" {
+		c.Audit.Build.Policy = "deny"
+	} else if buildPolicy != "deny" && buildPolicy != "allow" && buildPolicy != "list" {
+		return fmt.Errorf("audit.build.policy must be 'deny', 'allow', or 'list', got %q", buildPolicy)
+	}
+	if c.Audit.Build.Policy == "list" && len(c.Audit.Build.Allowed) == 0 {
+		return fmt.Errorf("audit.build.allowed must not be empty when policy is 'list'")
+	}
+
 	level := c.Logging.Level
 	if level == "" {
 		c.Logging.Level = "info"

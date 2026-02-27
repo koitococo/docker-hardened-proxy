@@ -253,3 +253,100 @@ audit:
 		t.Fatal("expected error for invalid rule action")
 	}
 }
+
+func TestParseBuildPolicyDefault(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Audit.Build.Policy != "deny" {
+		t.Errorf("build policy = %q, want %q", cfg.Audit.Build.Policy, "deny")
+	}
+}
+
+func TestParseBuildPolicyAllow(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  build:
+    policy: "allow"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Audit.Build.Policy != "allow" {
+		t.Errorf("build policy = %q, want %q", cfg.Audit.Build.Policy, "allow")
+	}
+}
+
+func TestParseBuildPolicyList(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  build:
+    policy: "list"
+    allowed:
+      - "myapp"
+      - "registry.example.com/"
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Audit.Build.Policy != "list" {
+		t.Errorf("build policy = %q, want %q", cfg.Audit.Build.Policy, "list")
+	}
+	if len(cfg.Audit.Build.Allowed) != 2 {
+		t.Errorf("allowed len = %d, want 2", len(cfg.Audit.Build.Allowed))
+	}
+}
+
+func TestParseBuildPolicyInvalid(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  build:
+    policy: "invalid"
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected error for invalid build policy")
+	}
+}
+
+func TestParseBuildPolicyListEmptyAllowed(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  build:
+    policy: "list"
+`)
+	_, err := Parse(data)
+	if err == nil {
+		t.Fatal("expected error for list policy with empty allowed")
+	}
+}

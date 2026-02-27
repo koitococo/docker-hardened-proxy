@@ -37,6 +37,22 @@ audit:
       deny_host: true
     uts_mode:
       deny_host: true
+  build:
+    # "deny" (default): block all builds
+    # "allow": allow all builds (with security enforcement)
+    # "list": allow builds only for listed image names
+    policy: "deny"
+    # For "list" policy: allowed image name patterns.
+    # Entries ending with "/" act as prefix matches (e.g., "registry.example.com/").
+    # Other entries match the exact image name (with or without tag).
+    # allowed:
+    #   - "myapp"
+    #   - "registry.example.com/"
+    #
+    # Security enforcement (always active when builds are allowed):
+    #   - Dangerous entitlements (network.host, security.insecure) are stripped
+    #   - networkmode=host is denied
+    #   - /session endpoint is denied (blocks secrets and SSH agent forwarding)
 
 logging:
   level: "info"

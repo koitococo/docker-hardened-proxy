@@ -56,8 +56,12 @@ func TestParse(t *testing.T) {
 		{"/_ping", Passthrough, "", "/_ping"},
 		{"/", Passthrough, "", "/"},
 
+		// Build
+		{"/build", Build, "", "/build"},
+		{"/v1.41/build", Build, "", "/build"},
+		{"/build?t=myimage", Build, "", "/build?t=myimage"},
+
 		// Denied (dangerous endpoints)
-		{"/build", Denied, "", "/build"},
 		{"/commit", Denied, "", "/commit"},
 		{"/events", Denied, "", "/events"},
 		{"/volumes/create", Denied, "", "/volumes/create"},
@@ -65,7 +69,7 @@ func TestParse(t *testing.T) {
 		{"/swarm/init", Denied, "", "/swarm/init"},
 		{"/services/create", Denied, "", "/services/create"},
 		{"/images/prune", Denied, "", "/images/prune"},
-		{"/v1.41/build", Denied, "", "/build"},
+		{"/session", Denied, "", "/session"},
 	}
 
 	for _, tt := range tests {
@@ -118,6 +122,7 @@ func TestEndpointKindString(t *testing.T) {
 		{ContainerList, "container_list"},
 		{ExecCreate, "exec_create"},
 		{ExecOp, "exec_op"},
+		{Build, "build"},
 		{Denied, "denied"},
 	}
 	for _, tt := range tests {

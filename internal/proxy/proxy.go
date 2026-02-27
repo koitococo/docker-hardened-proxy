@@ -110,6 +110,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
 			return
 		}
+	case route.Build:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.handleBuild(w, r)
+		return
 	case route.Denied:
 		h.logger.Warn("denied",
 			"endpoint", info.Kind.String(),
@@ -190,6 +197,23 @@ func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
+	h.forward(w, r)
+}
+
+func (h *Handler) handleBuild(w http.ResponseWriter, r *http.Request) {
+	result := audit.AuditBuild(r.URL.Query(), h.cfg)
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "build",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	r.URL.RawQuery = result.Query.Encode()
+
+	h.logger.Info("build allowed")
 	h.forward(w, r)
 }
 

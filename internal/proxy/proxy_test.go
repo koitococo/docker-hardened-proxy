@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
+	"strings"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -372,6 +373,122 @@ func TestHandlerContainerList(t *testing.T) {
 
 	if query == "" {
 		t.Fatal("expected query to contain filters")
+	}
+}
+
+func TestHandlerBuildDenyPolicy(t *testing.T) {
+	cfg := testCfg()
+	// default policy is "deny" (not set = zero value, but testCfg doesn't set it)
+	cfg.Audit.Build.Policy = "deny"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/build?t=myimage", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerBuildAllowPolicy(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/build?t=myimage", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+func TestHandlerBuildDenyNetworkModeHost(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/build?t=myimage&networkmode=host", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerBuildStripEntitlements(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/build?t=myimage&allow=network.host,security.insecure", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Verify the forwarded query doesn't contain the allow param
+	var resp map[string]any
+	json.Unmarshal(w.Body.Bytes(), &resp)
+	query := resp["query"].(string)
+	if strings.Contains(query, "network.host") || strings.Contains(query, "security.insecure") {
+		t.Errorf("forwarded query still contains dangerous entitlements: %s", query)
+	}
+}
+
+func TestHandlerBuildListPolicy(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "list"
+	cfg.Audit.Build.Allowed = []string{"myapp", "registry.example.com/"}
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	// Allowed tag
+	req := httptest.NewRequest("POST", "/v1.41/build?t=myapp:v1", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("allowed tag: status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	// Denied tag
+	req = httptest.NewRequest("POST", "/v1.41/build?t=other:v1", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("denied tag: status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerBuildMethodNotAllowed(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("GET", "/v1.41/build", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandlerSessionDenied(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/session", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
 	}
 }
 

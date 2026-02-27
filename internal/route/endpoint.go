@@ -16,6 +16,8 @@ const (
 	ExecCreate
 	// ExecOp is an operation on an exec instance (start, resize, inspect, json).
 	ExecOp
+	// Build is POST /build.
+	Build
 	// Denied endpoints are blocked by default (unrecognized/dangerous paths).
 	Denied
 )
@@ -32,6 +34,8 @@ func (k EndpointKind) String() string {
 		return "exec_create"
 	case ExecOp:
 		return "exec_op"
+	case Build:
+		return "build"
 	case Denied:
 		return "denied"
 	default:

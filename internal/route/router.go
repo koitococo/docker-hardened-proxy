@@ -128,10 +128,14 @@ var safeImageIDActions = map[string]bool{
 }
 
 func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
-	// Single-segment paths: /_ping, /version, /info
+	// Single-segment paths: /_ping, /version, /info, /build
 	if len(parts) == 1 {
 		if safePassthroughPaths[parts[0]] {
 			return info // Kind remains Passthrough
+		}
+		if parts[0] == "build" {
+			info.Kind = Build
+			return info
 		}
 		info.Kind = Denied
 		return info
