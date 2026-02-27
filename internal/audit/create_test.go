@@ -15,6 +15,17 @@ func testConfig() *config.Config {
 			DeniedCapabilities: []string{"ALL", "SYS_ADMIN", "NET_ADMIN"},
 			BindMounts: config.BindMountsConfig{
 				DefaultAction: "deny",
+				Rules: []config.BindMountRule{
+					{
+						SourcePrefix:  "/home/ubuntu",
+						RewritePrefix: "/mnt/home/ubuntu",
+						Action:        "allow",
+					},
+					{
+						SourcePrefix: "/tmp",
+						Action:       "allow",
+					},
+				},
 			},
 		},
 	}
@@ -109,6 +120,159 @@ func TestAuditCreateNoHostConfig(t *testing.T) {
 	}
 	if result.Denied {
 		t.Fatal("should not be denied without HostConfig")
+	}
+}
+
+func TestAuditCreateBindsDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["/etc/passwd:/mnt/passwd"]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for /etc bind mount")
+	}
+}
+
+func TestAuditCreateBindsAllowedWithRewrite(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["/home/ubuntu/project:/app"]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("should be allowed")
+	}
+
+	var parsed map[string]json.RawMessage
+	json.Unmarshal(result.Body, &parsed)
+	var hc map[string]json.RawMessage
+	json.Unmarshal(parsed["HostConfig"], &hc)
+	var binds []string
+	json.Unmarshal(hc["Binds"], &binds)
+
+	if len(binds) != 1 {
+		t.Fatalf("binds len = %d", len(binds))
+	}
+	if binds[0] != "/mnt/home/ubuntu/project:/app" {
+		t.Errorf("rewritten bind = %q", binds[0])
+	}
+}
+
+func TestAuditCreateBindsAllowedNoRewrite(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["/tmp/data:/data"]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("should be allowed for /tmp")
+	}
+
+	var parsed map[string]json.RawMessage
+	json.Unmarshal(result.Body, &parsed)
+	var hc map[string]json.RawMessage
+	json.Unmarshal(parsed["HostConfig"], &hc)
+	var binds []string
+	json.Unmarshal(hc["Binds"], &binds)
+
+	if binds[0] != "/tmp/data:/data" {
+		t.Errorf("bind should be unchanged, got %q", binds[0])
+	}
+}
+
+func TestAuditCreateBindsNamedVolume(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["myvolume:/data"]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("named volumes should pass through")
+	}
+}
+
+func TestAuditCreateMountsDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Mounts":[{"Type":"bind","Source":"/etc/passwd","Target":"/mnt/passwd"}]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for /etc bind mount via Mounts")
+	}
+}
+
+func TestAuditCreateMountsRewritten(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Mounts":[{"Type":"bind","Source":"/home/ubuntu/code","Target":"/app"}]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("should be allowed")
+	}
+
+	var parsed map[string]json.RawMessage
+	json.Unmarshal(result.Body, &parsed)
+	var hc map[string]json.RawMessage
+	json.Unmarshal(parsed["HostConfig"], &hc)
+	var mounts []map[string]json.RawMessage
+	json.Unmarshal(hc["Mounts"], &mounts)
+
+	if len(mounts) != 1 {
+		t.Fatalf("mounts len = %d", len(mounts))
+	}
+	var source string
+	json.Unmarshal(mounts[0]["Source"], &source)
+	if source != "/mnt/home/ubuntu/code" {
+		t.Errorf("rewritten source = %q", source)
+	}
+}
+
+func TestAuditCreateMountsNonBind(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Mounts":[{"Type":"volume","Source":"myvolume","Target":"/data"}]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("non-bind mounts should pass through")
+	}
+}
+
+func TestMatchBindRule(t *testing.T) {
+	cfg := &config.BindMountsConfig{
+		DefaultAction: "deny",
+		Rules: []config.BindMountRule{
+			{SourcePrefix: "/home/ubuntu", RewritePrefix: "/mnt/home/ubuntu", Action: "allow"},
+			{SourcePrefix: "/tmp", Action: "allow"},
+			{SourcePrefix: "/var/log", Action: "deny"},
+		},
+	}
+
+	tests := []struct {
+		source      string
+		wantAllowed bool
+		wantPath    string
+	}{
+		{"/home/ubuntu/code", true, "/mnt/home/ubuntu/code"},
+		{"/home/ubuntu", true, "/mnt/home/ubuntu"},
+		{"/tmp/data", true, "/tmp/data"},
+		{"/var/log/syslog", false, "/var/log/syslog"},
+		{"/etc/passwd", false, "/etc/passwd"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			allowed, path := matchBindRule(tt.source, cfg)
+			if allowed != tt.wantAllowed {
+				t.Errorf("allowed = %v, want %v", allowed, tt.wantAllowed)
+			}
+			if path != tt.wantPath {
+				t.Errorf("path = %q, want %q", path, tt.wantPath)
+			}
+		})
 	}
 }
 

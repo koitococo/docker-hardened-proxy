@@ -70,6 +70,11 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		}
 	}
 
+	// Check bind mounts
+	if denied, reason := cr.checkBindMounts(&cfg.Audit.BindMounts); denied {
+		return &AuditResult{Denied: true, Reason: reason}, nil
+	}
+
 	// Inject namespace labels
 	cr.injectLabels(cfg.Namespace)
 
@@ -124,6 +129,98 @@ func (cr *CreateRequest) checkCapabilities(denied []string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+func (cr *CreateRequest) checkBindMounts(cfg *config.BindMountsConfig) (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+
+	// Check HostConfig.Binds (string format: "source:dest[:options]")
+	if bindsRaw, ok := cr.hostConfig["Binds"]; ok {
+		var binds []string
+		if err := json.Unmarshal(bindsRaw, &binds); err == nil {
+			newBinds := make([]string, 0, len(binds))
+			for _, bind := range binds {
+				parts := strings.SplitN(bind, ":", 3)
+				if len(parts) < 2 {
+					newBinds = append(newBinds, bind)
+					continue
+				}
+				source := parts[0]
+				// Skip non-absolute paths (named volumes)
+				if !strings.HasPrefix(source, "/") {
+					newBinds = append(newBinds, bind)
+					continue
+				}
+				allowed, rewritten := matchBindRule(source, cfg)
+				if !allowed {
+					return true, fmt.Sprintf("bind mount source %q is denied", source)
+				}
+				if rewritten != source {
+					parts[0] = rewritten
+				}
+				newBinds = append(newBinds, strings.Join(parts, ":"))
+			}
+			encoded, _ := json.Marshal(newBinds)
+			cr.hostConfig["Binds"] = encoded
+		}
+	}
+
+	// Check HostConfig.Mounts (object format)
+	if mountsRaw, ok := cr.hostConfig["Mounts"]; ok {
+		var mounts []map[string]json.RawMessage
+		if err := json.Unmarshal(mountsRaw, &mounts); err == nil {
+			for i, mount := range mounts {
+				var mountType string
+				if t, ok := mount["Type"]; ok {
+					json.Unmarshal(t, &mountType)
+				}
+				if mountType != "bind" {
+					continue
+				}
+				var source string
+				if s, ok := mount["Source"]; ok {
+					json.Unmarshal(s, &source)
+				}
+				if source == "" {
+					continue
+				}
+				allowed, rewritten := matchBindRule(source, cfg)
+				if !allowed {
+					return true, fmt.Sprintf("bind mount source %q is denied", source)
+				}
+				if rewritten != source {
+					encoded, _ := json.Marshal(rewritten)
+					mounts[i]["Source"] = encoded
+				}
+			}
+			encoded, _ := json.Marshal(mounts)
+			cr.hostConfig["Mounts"] = encoded
+		}
+	}
+
+	return false, ""
+}
+
+// matchBindRule checks a bind mount source against configured rules.
+// Returns (allowed, rewrittenPath).
+func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
+	for _, rule := range cfg.Rules {
+		if strings.HasPrefix(source, rule.SourcePrefix) {
+			if rule.Action == "deny" {
+				return false, source
+			}
+			// Apply rewrite if configured
+			if rule.RewritePrefix != "" {
+				rewritten := rule.RewritePrefix + source[len(rule.SourcePrefix):]
+				return true, rewritten
+			}
+			return true, source
+		}
+	}
+	// No rule matched — use default action
+	return cfg.DefaultAction == "allow", source
 }
 
 func (cr *CreateRequest) injectLabels(namespace string) {
