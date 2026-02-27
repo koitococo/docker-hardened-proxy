@@ -48,10 +48,12 @@ type UpstreamTLSConfig struct {
 }
 
 type AuditConfig struct {
-	DenyPrivileged     bool               `yaml:"deny_privileged"`
-	DeniedCapabilities []string           `yaml:"denied_capabilities"`
-	BindMounts         BindMountsConfig   `yaml:"bind_mounts"`
-	Namespaces         NamespacesConfig   `yaml:"namespaces"`
+	DenyPrivileged          bool               `yaml:"deny_privileged"`
+	DenySecurityOptOverride bool               `yaml:"deny_security_opt_override"`
+	DenyDevices             bool               `yaml:"deny_devices"`
+	DeniedCapabilities      []string           `yaml:"denied_capabilities"`
+	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`
+	Namespaces              NamespacesConfig   `yaml:"namespaces"`
 }
 
 type BindMountsConfig struct {

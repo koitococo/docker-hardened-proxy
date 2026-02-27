@@ -76,6 +76,20 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		return &AuditResult{Denied: true, Reason: reason}, nil
 	}
 
+	// Check security options
+	if cfg.Audit.DenySecurityOptOverride {
+		if denied, reason := cr.checkSecurityOpt(); denied {
+			return &AuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
+	// Check devices
+	if cfg.Audit.DenyDevices {
+		if denied, reason := cr.checkDevices(); denied {
+			return &AuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
 	// Check namespace modes
 	if denied, reason := cr.checkNamespaceModes(&cfg.Audit.Namespaces); denied {
 		return &AuditResult{Denied: true, Reason: reason}, nil
@@ -234,6 +248,58 @@ func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
 	}
 	// No rule matched — use default action
 	return cfg.DefaultAction == "allow", source
+}
+
+// dangerousSecurityOpts lists SecurityOpt values that disable security mechanisms.
+var dangerousSecurityOpts = []string{
+	"seccomp=unconfined",
+	"seccomp:unconfined",
+	"apparmor=unconfined",
+	"apparmor:unconfined",
+	"label:disable",
+	"label=disable",
+	"no-new-privileges:false",
+	"no-new-privileges=false",
+}
+
+func (cr *CreateRequest) checkSecurityOpt() (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["SecurityOpt"]
+	if !ok {
+		return false, ""
+	}
+	var opts []string
+	if err := json.Unmarshal(raw, &opts); err != nil {
+		return true, "SecurityOpt field has invalid type"
+	}
+	for _, opt := range opts {
+		for _, dangerous := range dangerousSecurityOpts {
+			if strings.EqualFold(opt, dangerous) {
+				return true, fmt.Sprintf("security option %q is denied", opt)
+			}
+		}
+	}
+	return false, ""
+}
+
+func (cr *CreateRequest) checkDevices() (bool, string) {
+	if cr.hostConfig == nil {
+		return false, ""
+	}
+	raw, ok := cr.hostConfig["Devices"]
+	if !ok {
+		return false, ""
+	}
+	var devices []json.RawMessage
+	if err := json.Unmarshal(raw, &devices); err != nil {
+		return true, "Devices field has invalid type"
+	}
+	if len(devices) > 0 {
+		return true, "host device access is denied"
+	}
+	return false, ""
 }
 
 func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool, string) {

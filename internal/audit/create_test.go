@@ -410,6 +410,62 @@ func TestAuditCreateNamespaceModeNotDenied(t *testing.T) {
 	}
 }
 
+func TestAuditCreateSecurityOptDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenySecurityOptOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"SecurityOpt":["seccomp=unconfined"]}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for seccomp=unconfined")
+	}
+}
+
+func TestAuditCreateSecurityOptAllowed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenySecurityOptOverride = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"SecurityOpt":["no-new-privileges:true"]}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("no-new-privileges:true should be allowed")
+	}
+}
+
+func TestAuditCreateDevicesDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyDevices = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Devices":[{"PathOnHost":"/dev/sda","PathInContainer":"/dev/sda"}]}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for device access")
+	}
+}
+
+func TestAuditCreateDevicesEmptyAllowed(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.DenyDevices = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"Devices":[]}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatal("empty devices list should be allowed")
+	}
+}
+
 func TestAuditCreateMalformedPrivilegedDenied(t *testing.T) {
 	body := []byte(`{"Image":"alpine","HostConfig":{"Privileged":"yes"}}`)
 	result, err := AuditCreate(body, testConfig())
