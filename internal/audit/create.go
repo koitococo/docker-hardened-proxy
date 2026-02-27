@@ -46,6 +46,7 @@ func ParseCreateRequest(body []byte) (*CreateRequest, error) {
 type AuditResult struct {
 	Denied  bool
 	Reason  string
+	Warning string
 	Rewrite bool
 	Body    []byte
 	// ReferencedContainers holds container IDs from "container:{id}" namespace
@@ -126,7 +127,7 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 	}
 
 	// Inject namespace labels
-	cr.injectLabels(cfg.Namespace)
+	labelWarning := cr.injectLabels(cfg.Namespace)
 
 	// Serialize back
 	result, err := cr.serialize()
@@ -134,7 +135,7 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		return nil, err
 	}
 
-	return &AuditResult{Rewrite: true, Body: result, ReferencedContainers: referencedContainers}, nil
+	return &AuditResult{Rewrite: true, Body: result, Warning: labelWarning, ReferencedContainers: referencedContainers}, nil
 }
 
 func (cr *CreateRequest) checkPrivileged() (bool, string) {
@@ -499,11 +500,14 @@ func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (deni
 	return false, "", referencedContainers
 }
 
-func (cr *CreateRequest) injectLabels(namespace string) {
+func (cr *CreateRequest) injectLabels(namespace string) string {
 	var labels map[string]string
+	var warning string
 
 	if raw, ok := cr.raw["Labels"]; ok {
-		json.Unmarshal(raw, &labels)
+		if err := json.Unmarshal(raw, &labels); err != nil {
+			warning = fmt.Sprintf("existing Labels field could not be parsed (overwritten): %v", err)
+		}
 	}
 	if labels == nil {
 		labels = make(map[string]string)
@@ -514,6 +518,7 @@ func (cr *CreateRequest) injectLabels(namespace string) {
 
 	encoded, _ := json.Marshal(labels)
 	cr.raw["Labels"] = encoded
+	return warning
 }
 
 func (cr *CreateRequest) serialize() ([]byte, error) {

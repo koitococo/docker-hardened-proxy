@@ -289,6 +289,10 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 		}
 	}
 
+	if result.Warning != "" {
+		h.logger.Warn("audit warning", "warning", result.Warning)
+	}
+
 	h.logger.Info("container create allowed",
 		"rewritten", result.Rewrite,
 	)
