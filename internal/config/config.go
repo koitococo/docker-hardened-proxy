@@ -246,10 +246,22 @@ func (c *Config) validate() error {
 	level := c.Logging.Level
 	if level == "" {
 		c.Logging.Level = "info"
+	} else {
+		switch level {
+		case "debug", "info", "warn", "error":
+		default:
+			return fmt.Errorf("logging.level must be 'debug', 'info', 'warn', or 'error', got %q", level)
+		}
 	}
 	format := c.Logging.Format
 	if format == "" {
 		c.Logging.Format = "json"
+	} else {
+		switch format {
+		case "json", "text":
+		default:
+			return fmt.Errorf("logging.format must be 'json' or 'text', got %q", format)
+		}
 	}
 	return nil
 }
