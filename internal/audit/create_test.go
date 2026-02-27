@@ -410,6 +410,53 @@ func TestAuditCreateNamespaceModeNotDenied(t *testing.T) {
 	}
 }
 
+func TestAuditCreateMalformedPrivilegedDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Privileged":"yes"}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for malformed Privileged field")
+	}
+}
+
+func TestAuditCreateMalformedCapAddDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"CapAdd":"SYS_ADMIN"}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for malformed CapAdd field")
+	}
+}
+
+func TestAuditCreateMalformedBindsDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":"/etc/passwd:/mnt"}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for malformed Binds field")
+	}
+}
+
+func TestAuditCreateMalformedNetworkModeDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"NetworkMode":123}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for malformed NetworkMode field")
+	}
+}
+
 func TestAuditCreatePreservesUnknownFields(t *testing.T) {
 	body := []byte(`{"Image":"alpine","Cmd":["echo","hello"],"Env":["FOO=bar"]}`)
 	result, err := AuditCreate(body, testConfig())

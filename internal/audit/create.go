@@ -103,7 +103,7 @@ func (cr *CreateRequest) checkPrivileged() (bool, string) {
 	}
 	var privileged bool
 	if err := json.Unmarshal(priv, &privileged); err != nil {
-		return false, ""
+		return true, "Privileged field has invalid type"
 	}
 	if privileged {
 		return true, "privileged mode is denied"
@@ -121,7 +121,7 @@ func (cr *CreateRequest) checkCapabilities(denied []string) (bool, string) {
 	}
 	var caps []string
 	if err := json.Unmarshal(capAdd, &caps); err != nil {
-		return false, ""
+		return true, "CapAdd field has invalid type"
 	}
 
 	deniedSet := make(map[string]struct{}, len(denied))
@@ -145,65 +145,71 @@ func (cr *CreateRequest) checkBindMounts(cfg *config.BindMountsConfig) (bool, st
 	// Check HostConfig.Binds (string format: "source:dest[:options]")
 	if bindsRaw, ok := cr.hostConfig["Binds"]; ok {
 		var binds []string
-		if err := json.Unmarshal(bindsRaw, &binds); err == nil {
-			newBinds := make([]string, 0, len(binds))
-			for _, bind := range binds {
-				parts := strings.SplitN(bind, ":", 3)
-				if len(parts) < 2 {
-					newBinds = append(newBinds, bind)
-					continue
-				}
-				source := parts[0]
-				// Skip non-absolute paths (named volumes)
-				if !strings.HasPrefix(source, "/") {
-					newBinds = append(newBinds, bind)
-					continue
-				}
-				allowed, rewritten := matchBindRule(source, cfg)
-				if !allowed {
-					return true, fmt.Sprintf("bind mount source %q is denied", source)
-				}
-				if rewritten != source {
-					parts[0] = rewritten
-				}
-				newBinds = append(newBinds, strings.Join(parts, ":"))
-			}
-			encoded, _ := json.Marshal(newBinds)
-			cr.hostConfig["Binds"] = encoded
+		if err := json.Unmarshal(bindsRaw, &binds); err != nil {
+			return true, "Binds field has invalid type"
 		}
+		newBinds := make([]string, 0, len(binds))
+		for _, bind := range binds {
+			parts := strings.SplitN(bind, ":", 3)
+			if len(parts) < 2 {
+				newBinds = append(newBinds, bind)
+				continue
+			}
+			source := parts[0]
+			// Skip non-absolute paths (named volumes)
+			if !strings.HasPrefix(source, "/") {
+				newBinds = append(newBinds, bind)
+				continue
+			}
+			allowed, rewritten := matchBindRule(source, cfg)
+			if !allowed {
+				return true, fmt.Sprintf("bind mount source %q is denied", source)
+			}
+			if rewritten != source {
+				parts[0] = rewritten
+			}
+			newBinds = append(newBinds, strings.Join(parts, ":"))
+		}
+		encoded, _ := json.Marshal(newBinds)
+		cr.hostConfig["Binds"] = encoded
 	}
 
 	// Check HostConfig.Mounts (object format)
 	if mountsRaw, ok := cr.hostConfig["Mounts"]; ok {
 		var mounts []map[string]json.RawMessage
-		if err := json.Unmarshal(mountsRaw, &mounts); err == nil {
-			for i, mount := range mounts {
-				var mountType string
-				if t, ok := mount["Type"]; ok {
-					json.Unmarshal(t, &mountType)
-				}
-				if mountType != "bind" {
-					continue
-				}
-				var source string
-				if s, ok := mount["Source"]; ok {
-					json.Unmarshal(s, &source)
-				}
-				if source == "" {
-					continue
-				}
-				allowed, rewritten := matchBindRule(source, cfg)
-				if !allowed {
-					return true, fmt.Sprintf("bind mount source %q is denied", source)
-				}
-				if rewritten != source {
-					encoded, _ := json.Marshal(rewritten)
-					mounts[i]["Source"] = encoded
+		if err := json.Unmarshal(mountsRaw, &mounts); err != nil {
+			return true, "Mounts field has invalid type"
+		}
+		for i, mount := range mounts {
+			var mountType string
+			if t, ok := mount["Type"]; ok {
+				if err := json.Unmarshal(t, &mountType); err != nil {
+					return true, "Mount Type field has invalid type"
 				}
 			}
-			encoded, _ := json.Marshal(mounts)
-			cr.hostConfig["Mounts"] = encoded
+			if mountType != "bind" {
+				continue
+			}
+			var source string
+			if s, ok := mount["Source"]; ok {
+				if err := json.Unmarshal(s, &source); err != nil {
+					return true, "Mount Source field has invalid type"
+				}
+			}
+			if source == "" {
+				continue
+			}
+			allowed, rewritten := matchBindRule(source, cfg)
+			if !allowed {
+				return true, fmt.Sprintf("bind mount source %q is denied", source)
+			}
+			if rewritten != source {
+				encoded, _ := json.Marshal(rewritten)
+				mounts[i]["Source"] = encoded
+			}
 		}
+		encoded, _ := json.Marshal(mounts)
+		cr.hostConfig["Mounts"] = encoded
 	}
 
 	return false, ""
@@ -256,7 +262,7 @@ func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool
 		}
 		var mode string
 		if err := json.Unmarshal(raw, &mode); err != nil {
-			continue
+			return true, fmt.Sprintf("%s field has invalid type", check.name)
 		}
 		if mode == "host" || strings.HasPrefix(mode, "container:") {
 			return true, fmt.Sprintf("%s=%q is denied", check.name, mode)
