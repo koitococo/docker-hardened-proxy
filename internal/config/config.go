@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -219,6 +220,9 @@ func (c *Config) validate() error {
 	for i, rule := range c.Audit.BindMounts.Rules {
 		if rule.SourcePrefix == "" {
 			return fmt.Errorf("audit.bind_mounts.rules[%d].source_prefix is required", i)
+		}
+		if !strings.HasPrefix(rule.SourcePrefix, "/") {
+			return fmt.Errorf("audit.bind_mounts.rules[%d].source_prefix must start with '/', got %q", i, rule.SourcePrefix)
 		}
 		if rule.Action != "allow" && rule.Action != "deny" {
 			return fmt.Errorf("audit.bind_mounts.rules[%d].action must be 'allow' or 'deny', got %q", i, rule.Action)
