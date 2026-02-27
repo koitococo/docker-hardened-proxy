@@ -9,6 +9,7 @@ import (
 	"syscall"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
+	"github.com/koitococo/docker-hardened-proxy/internal/docker"
 	"github.com/koitococo/docker-hardened-proxy/internal/proxy"
 	"github.com/koitococo/docker-hardened-proxy/internal/server"
 )
@@ -25,7 +26,13 @@ func main() {
 
 	logger := setupLogger(cfg)
 
-	handler := proxy.New(cfg, logger)
+	dockerClient, err := docker.NewClient(cfg.Upstream.Socket)
+	if err != nil {
+		logger.Error("failed to create docker client", "error", err)
+		os.Exit(1)
+	}
+
+	handler := proxy.New(cfg, dockerClient, logger)
 	srv := server.New(cfg, handler, logger)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
