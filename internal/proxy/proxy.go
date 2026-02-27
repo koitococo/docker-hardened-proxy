@@ -66,7 +66,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case route.ContainerList:
 		h.handleContainerList(w, r)
 		return
-	case route.ContainerOp, route.ExecCreate:
+	case route.ExecCreate:
+		if err := h.checkNamespace(r, info); err != nil {
+			h.logger.Warn("denied",
+				"endpoint", info.Kind.String(),
+				"id", info.ID,
+				"reason", err.Error(),
+			)
+			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			return
+		}
+		h.handleExecCreate(w, r)
+		return
+	case route.ContainerOp:
 		if err := h.checkNamespace(r, info); err != nil {
 			h.logger.Warn("denied",
 				"endpoint", info.Kind.String(),
@@ -134,8 +146,40 @@ func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
 	h.forward(w, r)
 }
 
-// maxCreateBodySize is the maximum allowed request body size for container create (10MB).
+// maxCreateBodySize is the maximum allowed request body size for container/exec create (10MB).
 const maxCreateBodySize = 10 << 20
+
+func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)
+	body, err := io.ReadAll(r.Body)
+	r.Body.Close()
+	if err != nil {
+		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	result, err := audit.AuditExecCreate(body, h.cfg)
+	if err != nil {
+		h.logger.Error("exec audit error", "error", err)
+		http.Error(w, "audit error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "exec_create",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	// Restore body for forwarding
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+
+	h.forward(w, r)
+}
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)

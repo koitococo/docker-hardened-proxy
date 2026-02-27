@@ -304,6 +304,56 @@ func TestHandlerExecOpNamespaceCheck(t *testing.T) {
 	}
 }
 
+func TestHandlerExecCreateDenyPrivileged(t *testing.T) {
+	dc := &mockDocker{
+		containers: map[string]types.ContainerJSON{
+			"ctr1": {
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						"ltkk.run/namespace": "testns",
+					},
+				},
+			},
+		},
+	}
+	h := newTestHandler(t, testCfg(), dc)
+
+	body := `{"Privileged":true,"Cmd":["/bin/sh"]}`
+	req := httptest.NewRequest("POST", "/v1.41/containers/ctr1/exec", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("privileged exec: status = %d, want %d; body: %s", w.Code, http.StatusForbidden, w.Body.String())
+	}
+}
+
+func TestHandlerExecCreateAllowed(t *testing.T) {
+	dc := &mockDocker{
+		containers: map[string]types.ContainerJSON{
+			"ctr1": {
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						"ltkk.run/namespace": "testns",
+					},
+				},
+			},
+		},
+	}
+	h := newTestHandler(t, testCfg(), dc)
+
+	body := `{"Cmd":["/bin/sh"]}`
+	req := httptest.NewRequest("POST", "/v1.41/containers/ctr1/exec", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("normal exec: status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
 func TestHandlerContainerList(t *testing.T) {
 	h := newTestHandler(t, testCfg(), &mockDocker{})
 
