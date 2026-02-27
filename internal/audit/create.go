@@ -230,24 +230,35 @@ func (cr *CreateRequest) checkBindMounts(cfg *config.BindMountsConfig) (bool, st
 }
 
 // matchBindRule checks a bind mount source against configured rules.
+// Uses longest-prefix-match semantics so more specific rules always win.
 // Returns (allowed, rewrittenPath).
 func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
 	source = path.Clean(source)
-	for _, rule := range cfg.Rules {
-		if strings.HasPrefix(source, rule.SourcePrefix) {
-			if rule.Action == "deny" {
-				return false, source
-			}
-			// Apply rewrite if configured
-			if rule.RewritePrefix != "" {
-				rewritten := rule.RewritePrefix + source[len(rule.SourcePrefix):]
-				return true, rewritten
-			}
-			return true, source
+
+	bestIdx := -1
+	bestLen := 0
+	for i, rule := range cfg.Rules {
+		if strings.HasPrefix(source, rule.SourcePrefix) && len(rule.SourcePrefix) > bestLen {
+			bestIdx = i
+			bestLen = len(rule.SourcePrefix)
 		}
 	}
-	// No rule matched — use default action
-	return cfg.DefaultAction == "allow", source
+
+	if bestIdx < 0 {
+		// No rule matched — use default action
+		return cfg.DefaultAction == "allow", source
+	}
+
+	rule := cfg.Rules[bestIdx]
+	if rule.Action == "deny" {
+		return false, source
+	}
+	// Apply rewrite if configured
+	if rule.RewritePrefix != "" {
+		rewritten := rule.RewritePrefix + source[len(rule.SourcePrefix):]
+		return true, rewritten
+	}
+	return true, source
 }
 
 // dangerousSecurityOpts lists SecurityOpt values that disable security mechanisms.

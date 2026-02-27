@@ -276,6 +276,39 @@ func TestMatchBindRule(t *testing.T) {
 	}
 }
 
+func TestMatchBindRuleLongestPrefix(t *testing.T) {
+	cfg := &config.BindMountsConfig{
+		DefaultAction: "deny",
+		Rules: []config.BindMountRule{
+			{SourcePrefix: "/home", Action: "allow"},
+			{SourcePrefix: "/home/ubuntu/secrets", Action: "deny"},
+		},
+	}
+
+	tests := []struct {
+		source      string
+		wantAllowed bool
+		wantPath    string
+	}{
+		// More specific deny rule should win over broader allow
+		{"/home/ubuntu/secrets/key", false, "/home/ubuntu/secrets/key"},
+		// Broader allow should still work for non-secret paths
+		{"/home/ubuntu/code", true, "/home/ubuntu/code"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			allowed, path := matchBindRule(tt.source, cfg)
+			if allowed != tt.wantAllowed {
+				t.Errorf("allowed = %v, want %v", allowed, tt.wantAllowed)
+			}
+			if path != tt.wantPath {
+				t.Errorf("path = %q, want %q", path, tt.wantPath)
+			}
+		})
+	}
+}
+
 func TestAuditCreateBindPathTraversalDenied(t *testing.T) {
 	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["/home/ubuntu/../../etc/shadow:/mnt/shadow"]}}`)
 	result, err := AuditCreate(body, testConfig())
