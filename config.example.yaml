@@ -18,10 +18,22 @@ namespace: "default"
 
 audit:
   deny_privileged: true
+  deny_security_opt_override: true
+  deny_devices: true
+  deny_info: true
+  deny_oom_kill_disable: true
+  deny_pids_limit_override: true
+  deny_log_config_override: true
   denied_capabilities:
     - "ALL"
     - "SYS_ADMIN"
     - "NET_ADMIN"
+  sysctls:
+    # "deny" (default): only allow sysctls in the allowed list
+    # "allow": allow all sysctls
+    default_action: "deny"
+    # allowed:
+    #   - "net.ipv4.ping_group_range"
   bind_mounts:
     default_action: "deny"
     rules:
@@ -53,6 +65,15 @@ audit:
     #   - Dangerous entitlements (network.host, security.insecure) are stripped
     #   - networkmode=host is denied
     #   - /session endpoint is denied (blocks secrets and SSH agent forwarding)
+  pull:
+    # "allow" (default): allow all image pulls
+    # "deny": block all image pulls
+    # "list": allow pulls only for listed images/registries
+    policy: "allow"
+    # For "list" policy: allowed image name patterns (same syntax as build.allowed).
+    # allowed:
+    #   - "alpine"
+    #   - "docker.io/library/"
 
 logging:
   level: "info"
