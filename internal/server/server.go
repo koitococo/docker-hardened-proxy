@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 )
@@ -95,8 +96,10 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	// Wait for context cancellation, then shut down all servers gracefully.
 	go func() {
 		<-ctx.Done()
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
 		for _, srv := range servers {
-			srv.Shutdown(context.Background())
+			srv.Shutdown(shutdownCtx)
 		}
 		// Clean up Unix socket file
 		if s.cfg.Listeners.Unix != nil {
