@@ -48,6 +48,9 @@ type AuditResult struct {
 	Reason  string
 	Rewrite bool
 	Body    []byte
+	// ReferencedContainers holds container IDs from "container:{id}" namespace
+	// modes that need cross-namespace validation by the caller.
+	ReferencedContainers []string
 }
 
 // AuditCreate audits a container create request against the config policy.
@@ -117,7 +120,8 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 	}
 
 	// Check namespace modes
-	if denied, reason := cr.checkNamespaceModes(&cfg.Audit.Namespaces); denied {
+	denied, reason, referencedContainers := cr.checkNamespaceModes(&cfg.Audit.Namespaces)
+	if denied {
 		return &AuditResult{Denied: true, Reason: reason}, nil
 	}
 
@@ -130,7 +134,7 @@ func AuditCreate(body []byte, cfg *config.Config) (*AuditResult, error) {
 		return nil, err
 	}
 
-	return &AuditResult{Rewrite: true, Body: result}, nil
+	return &AuditResult{Rewrite: true, Body: result, ReferencedContainers: referencedContainers}, nil
 }
 
 func (cr *CreateRequest) checkPrivileged() (bool, string) {
@@ -441,9 +445,11 @@ func (cr *CreateRequest) checkLogConfig() (bool, string) {
 	return false, ""
 }
 
-func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool, string) {
+// checkNamespaceModes checks namespace mode fields and returns any "container:{id}"
+// references that need cross-namespace validation by the caller.
+func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (denied bool, reason string, referencedContainers []string) {
 	if cr.hostConfig == nil {
-		return false, ""
+		return false, "", nil
 	}
 
 	checks := []struct {
@@ -469,14 +475,21 @@ func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool
 		}
 		var mode string
 		if err := json.Unmarshal(raw, &mode); err != nil {
-			return true, fmt.Sprintf("%s field has invalid type", check.name)
+			return true, fmt.Sprintf("%s field has invalid type", check.name), nil
 		}
-		if mode == "host" || strings.HasPrefix(mode, "container:") {
-			return true, fmt.Sprintf("%s=%q is denied", check.name, mode)
+		if mode == "host" {
+			return true, fmt.Sprintf("%s=%q is denied", check.name, mode), nil
+		}
+		if strings.HasPrefix(mode, "container:") {
+			containerID := strings.TrimPrefix(mode, "container:")
+			if containerID == "" {
+				return true, fmt.Sprintf("%s=%q has empty container ID", check.name, mode), nil
+			}
+			referencedContainers = append(referencedContainers, containerID)
 		}
 	}
 
-	return false, ""
+	return false, "", referencedContainers
 }
 
 func (cr *CreateRequest) injectLabels(namespace string) {

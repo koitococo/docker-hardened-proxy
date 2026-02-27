@@ -349,7 +349,7 @@ func TestAuditCreateNetworkModeHostDenied(t *testing.T) {
 	}
 }
 
-func TestAuditCreateNetworkModeContainerDenied(t *testing.T) {
+func TestAuditCreateNetworkModeContainerReferences(t *testing.T) {
 	cfg := testConfig()
 	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
 
@@ -358,12 +358,16 @@ func TestAuditCreateNetworkModeContainerDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.Denied {
-		t.Fatal("expected deny for NetworkMode=container:foreign_id")
+	// container: mode should NOT be blanket-denied; instead return referenced container IDs
+	if result.Denied {
+		t.Fatal("container: mode should not be denied at audit level")
+	}
+	if len(result.ReferencedContainers) != 1 || result.ReferencedContainers[0] != "foreign_id" {
+		t.Errorf("ReferencedContainers = %v, want [foreign_id]", result.ReferencedContainers)
 	}
 }
 
-func TestAuditCreatePidModeContainerDenied(t *testing.T) {
+func TestAuditCreatePidModeContainerReferences(t *testing.T) {
 	cfg := testConfig()
 	cfg.Audit.Namespaces.PIDMode.DenyHost = true
 
@@ -372,8 +376,11 @@ func TestAuditCreatePidModeContainerDenied(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !result.Denied {
-		t.Fatal("expected deny for PidMode=container:foreign_id")
+	if result.Denied {
+		t.Fatal("container: mode should not be denied at audit level")
+	}
+	if len(result.ReferencedContainers) != 1 || result.ReferencedContainers[0] != "foreign_id" {
+		t.Errorf("ReferencedContainers = %v, want [foreign_id]", result.ReferencedContainers)
 	}
 }
 

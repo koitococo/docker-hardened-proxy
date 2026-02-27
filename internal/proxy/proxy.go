@@ -253,6 +253,19 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// Validate container: namespace mode references belong to the same namespace
+	for _, refID := range result.ReferencedContainers {
+		if err := audit.CheckContainer(r.Context(), h.docker, refID, h.cfg.Namespace); err != nil {
+			h.logger.Warn("denied",
+				"endpoint", "container_create",
+				"reason", "namespace mode references foreign container",
+				"ref_container", refID,
+			)
+			http.Error(w, "denied: namespace mode container:"+refID+" references a container outside this namespace", http.StatusForbidden)
+			return
+		}
+	}
+
 	h.logger.Info("container create allowed",
 		"rewritten", result.Rewrite,
 	)

@@ -153,6 +153,57 @@ func TestHandlerContainerCreateDenyNetworkModeHost(t *testing.T) {
 	}
 }
 
+func TestHandlerContainerCreateDenyContainerModeForeign(t *testing.T) {
+	dc := &mockDocker{
+		containers: map[string]types.ContainerJSON{
+			"foreign_ctr": {
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						"ltkk.run/namespace": "other",
+					},
+				},
+			},
+		},
+	}
+	h := newTestHandler(t, testCfg(), dc)
+
+	body := `{"Image":"alpine","HostConfig":{"NetworkMode":"container:foreign_ctr"}}`
+	req := httptest.NewRequest("POST", "/v1.41/containers/create", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerContainerCreateAllowContainerModeSameNamespace(t *testing.T) {
+	dc := &mockDocker{
+		containers: map[string]types.ContainerJSON{
+			"owned_ctr": {
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						"ltkk.run/namespace":  "testns",
+						"ltkk.run/managed-by": "docker-hardened-proxy",
+					},
+				},
+			},
+		},
+	}
+	h := newTestHandler(t, testCfg(), dc)
+
+	body := `{"Image":"alpine","HostConfig":{"NetworkMode":"container:owned_ctr"}}`
+	req := httptest.NewRequest("POST", "/v1.41/containers/create", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
 func TestHandlerContainerCreateAllowed(t *testing.T) {
 	h := newTestHandler(t, testCfg(), &mockDocker{})
 
