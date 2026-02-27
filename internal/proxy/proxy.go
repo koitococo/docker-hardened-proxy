@@ -51,6 +51,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case route.ContainerCreate:
 		h.handleContainerCreate(w, r)
 		return
+	case route.ContainerList:
+		h.handleContainerList(w, r)
+		return
 	case route.ContainerOp, route.ExecCreate:
 		if err := h.checkNamespace(r, info); err != nil {
 			h.logger.Warn("namespace check failed", "id", info.ID, "error", err)
@@ -80,6 +83,11 @@ func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) erro
 		return nil
 	}
 	return audit.CheckExec(r.Context(), h.docker, info.ID, h.cfg.Namespace)
+}
+
+func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
+	r.URL.RawQuery = audit.InjectNamespaceFilter(r.URL.Query(), h.cfg.Namespace).Encode()
+	h.reverse.ServeHTTP(w, r)
 }
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
