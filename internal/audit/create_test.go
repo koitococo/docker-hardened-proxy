@@ -276,6 +276,28 @@ func TestMatchBindRule(t *testing.T) {
 	}
 }
 
+func TestAuditCreateBindPathTraversalDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Binds":["/home/ubuntu/../../etc/shadow:/mnt/shadow"]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for path traversal bind mount")
+	}
+}
+
+func TestAuditCreateMountsPathTraversalDenied(t *testing.T) {
+	body := []byte(`{"Image":"alpine","HostConfig":{"Mounts":[{"Type":"bind","Source":"/home/ubuntu/../../etc/shadow","Target":"/mnt/shadow"}]}}`)
+	result, err := AuditCreate(body, testConfig())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for path traversal mount source")
+	}
+}
+
 func TestAuditCreateNetworkModeHostDenied(t *testing.T) {
 	cfg := testConfig()
 	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
@@ -287,6 +309,34 @@ func TestAuditCreateNetworkModeHostDenied(t *testing.T) {
 	}
 	if !result.Denied {
 		t.Fatal("expected deny for NetworkMode=host")
+	}
+}
+
+func TestAuditCreateNetworkModeContainerDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.NetworkMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"NetworkMode":"container:foreign_id"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for NetworkMode=container:foreign_id")
+	}
+}
+
+func TestAuditCreatePidModeContainerDenied(t *testing.T) {
+	cfg := testConfig()
+	cfg.Audit.Namespaces.PIDMode.DenyHost = true
+
+	body := []byte(`{"Image":"alpine","HostConfig":{"PidMode":"container:foreign_id"}}`)
+	result, err := AuditCreate(body, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected deny for PidMode=container:foreign_id")
 	}
 }
 

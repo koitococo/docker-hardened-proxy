@@ -3,6 +3,7 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
+	"path"
 	"strings"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -211,6 +212,7 @@ func (cr *CreateRequest) checkBindMounts(cfg *config.BindMountsConfig) (bool, st
 // matchBindRule checks a bind mount source against configured rules.
 // Returns (allowed, rewrittenPath).
 func matchBindRule(source string, cfg *config.BindMountsConfig) (bool, string) {
+	source = path.Clean(source)
 	for _, rule := range cfg.Rules {
 		if strings.HasPrefix(source, rule.SourcePrefix) {
 			if rule.Action == "deny" {
@@ -256,8 +258,8 @@ func (cr *CreateRequest) checkNamespaceModes(cfg *config.NamespacesConfig) (bool
 		if err := json.Unmarshal(raw, &mode); err != nil {
 			continue
 		}
-		if mode == "host" {
-			return true, fmt.Sprintf("%s=host is denied", check.name)
+		if mode == "host" || strings.HasPrefix(mode, "container:") {
+			return true, fmt.Sprintf("%s=%q is denied", check.name, mode)
 		}
 	}
 
