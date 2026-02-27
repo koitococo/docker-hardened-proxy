@@ -543,6 +543,57 @@ func TestHandlerSessionDenied(t *testing.T) {
 	}
 }
 
+func TestHandlerPullDenyPolicy(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Pull.Policy = "deny"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/images/create?fromImage=alpine", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerPullAllowPolicy(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Pull.Policy = "allow"
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/v1.41/images/create?fromImage=alpine", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+}
+
+func TestHandlerPullListPolicy(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Pull.Policy = "list"
+	cfg.Audit.Pull.Allowed = []string{"alpine", "docker.io/library/"}
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	// Allowed
+	req := httptest.NewRequest("POST", "/v1.41/images/create?fromImage=alpine", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusOK {
+		t.Errorf("allowed pull: status = %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Denied
+	req = httptest.NewRequest("POST", "/v1.41/images/create?fromImage=evil-image", nil)
+	w = httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+	if w.Code != http.StatusForbidden {
+		t.Errorf("denied pull: status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
 func TestHandlerPassthrough(t *testing.T) {
 	h := newTestHandler(t, testCfg(), &mockDocker{})
 

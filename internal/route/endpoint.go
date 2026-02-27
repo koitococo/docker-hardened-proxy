@@ -18,6 +18,8 @@ const (
 	ExecOp
 	// Build is POST /build.
 	Build
+	// ImagePull is POST /images/create (pull).
+	ImagePull
 	// SystemInfo is GET /info.
 	SystemInfo
 	// Denied endpoints are blocked by default (unrecognized/dangerous paths).
@@ -38,6 +40,8 @@ func (k EndpointKind) String() string {
 		return "exec_op"
 	case Build:
 		return "build"
+	case ImagePull:
+		return "image_pull"
 	case SystemInfo:
 		return "system_info"
 	case Denied:

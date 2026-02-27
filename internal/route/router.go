@@ -117,8 +117,7 @@ var safePassthroughPaths = map[string]bool{
 
 // safePassthroughPrefixes covers paths like /images/json, /images/{id}/json, /images/{id}/tag, /images/create.
 var safeImageActions = map[string]bool{
-	"json":   true,
-	"create": true,
+	"json": true,
 }
 
 var safeImageIDActions = map[string]bool{
@@ -147,7 +146,11 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 	// /images/* allowlist
 	if parts[0] == "images" {
 		if len(parts) == 2 {
-			// /images/json (list), /images/create (pull)
+			if parts[1] == "create" {
+				info.Kind = ImagePull
+				return info
+			}
+			// /images/json (list)
 			if safeImageActions[parts[1]] {
 				return info
 			}

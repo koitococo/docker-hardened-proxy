@@ -92,12 +92,20 @@ type AuditConfig struct {
 	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`
 	Namespaces              NamespacesConfig   `yaml:"namespaces"`
 	Build                   BuildConfig        `yaml:"build"`
+	Pull                    PullConfig         `yaml:"pull"`
 }
 
 type BuildConfig struct {
 	// Policy controls build access: "deny" (default), "allow", or "list".
 	Policy  string   `yaml:"policy"`
 	// Allowed is used when Policy is "list": image name prefixes matched against the tag parameter.
+	Allowed []string `yaml:"allowed,omitempty"`
+}
+
+type PullConfig struct {
+	// Policy controls image pull access: "allow" (default), "deny", or "list".
+	Policy  string   `yaml:"policy"`
+	// Allowed is used when Policy is "list": image name/registry prefixes.
 	Allowed []string `yaml:"allowed,omitempty"`
 }
 
@@ -224,6 +232,15 @@ func (c *Config) validate() error {
 	}
 	if c.Audit.Build.Policy == "list" && len(c.Audit.Build.Allowed) == 0 {
 		return fmt.Errorf("audit.build.allowed must not be empty when policy is 'list'")
+	}
+	pullPolicy := c.Audit.Pull.Policy
+	if pullPolicy == "" {
+		c.Audit.Pull.Policy = "allow"
+	} else if pullPolicy != "deny" && pullPolicy != "allow" && pullPolicy != "list" {
+		return fmt.Errorf("audit.pull.policy must be 'deny', 'allow', or 'list', got %q", pullPolicy)
+	}
+	if c.Audit.Pull.Policy == "list" && len(c.Audit.Pull.Allowed) == 0 {
+		return fmt.Errorf("audit.pull.allowed must not be empty when policy is 'list'")
 	}
 
 	level := c.Logging.Level

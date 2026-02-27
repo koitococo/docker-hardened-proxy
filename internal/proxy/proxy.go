@@ -119,6 +119,13 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "denied: system info is denied by policy", http.StatusForbidden)
 			return
 		}
+	case route.ImagePull:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.handleImagePull(w, r)
+		return
 	case route.Build:
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
@@ -206,6 +213,21 @@ func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 	r.Body = io.NopCloser(bytes.NewReader(body))
 	r.ContentLength = int64(len(body))
 
+	h.forward(w, r)
+}
+
+func (h *Handler) handleImagePull(w http.ResponseWriter, r *http.Request) {
+	result := audit.AuditPull(r.URL.Query(), h.cfg)
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "image_pull",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	h.logger.Info("image pull allowed")
 	h.forward(w, r)
 }
 

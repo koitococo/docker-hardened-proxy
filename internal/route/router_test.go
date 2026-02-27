@@ -48,7 +48,7 @@ func TestParse(t *testing.T) {
 		// Passthrough (allowlisted)
 		{"/images/json", Passthrough, "", "/images/json"},
 		{"/v1.41/images/json", Passthrough, "", "/images/json"},
-		{"/images/create", Passthrough, "", "/images/create"},
+		{"/images/create", ImagePull, "", "/images/create"},
 		{"/images/abc123/json", Passthrough, "", "/images/abc123/json"},
 		{"/images/abc123/tag", Passthrough, "", "/images/abc123/tag"},
 		{"/version", Passthrough, "", "/version"},
@@ -123,6 +123,7 @@ func TestEndpointKindString(t *testing.T) {
 		{ExecCreate, "exec_create"},
 		{ExecOp, "exec_op"},
 		{Build, "build"},
+		{ImagePull, "image_pull"},
 		{SystemInfo, "system_info"},
 		{Denied, "denied"},
 	}
