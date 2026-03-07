@@ -37,8 +37,8 @@ logging:
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if cfg.Listeners.TCP.Address != "127.0.0.1:2375" {
-		t.Errorf("tcp address = %q, want %q", cfg.Listeners.TCP.Address, "127.0.0.1:2375")
+	if len(cfg.Listeners.TCP.Address) != 1 || cfg.Listeners.TCP.Address[0] != "127.0.0.1:2375" {
+		t.Errorf("tcp address = %v, want [\"127.0.0.1:2375\"]", cfg.Listeners.TCP.Address)
 	}
 	if cfg.Listeners.Unix.Path != "/var/run/docker-proxy.sock" {
 		t.Errorf("unix path = %q", cfg.Listeners.Unix.Path)

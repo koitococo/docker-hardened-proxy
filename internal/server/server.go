@@ -43,22 +43,25 @@ func (s *Server) ListenAndServe(ctx context.Context) error {
 	}
 
 	if s.cfg.Listeners.TCP != nil {
-		ln, err := net.Listen("tcp", s.cfg.Listeners.TCP.Address)
-		if err != nil {
-			return fmt.Errorf("tcp listen: %w", err)
-		}
-		s.listeners = append(s.listeners, ln)
-		s.logger.Info("listening on TCP", "address", s.cfg.Listeners.TCP.Address)
-
-		srv := &http.Server{Handler: s.handler}
-		servers = append(servers, srv)
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
-				s.logger.Error("tcp serve error", "error", err)
+		for _, addr := range s.cfg.Listeners.TCP.Address {
+			ln, err := net.Listen("tcp", addr)
+			if err != nil {
+				cleanup()
+				return fmt.Errorf("tcp listen %q: %w", addr, err)
 			}
-		}()
+			s.listeners = append(s.listeners, ln)
+			s.logger.Info("listening on TCP", "address", addr)
+
+			srv := &http.Server{Handler: s.handler}
+			servers = append(servers, srv)
+			wg.Add(1)
+			go func(address string, listener net.Listener, server *http.Server) {
+				defer wg.Done()
+				if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+					s.logger.Error("tcp serve error", "address", address, "error", err)
+				}
+			}(addr, ln, srv)
+		}
 	}
 
 	if s.cfg.Listeners.Unix != nil {

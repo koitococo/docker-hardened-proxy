@@ -57,7 +57,32 @@ type ListenersConfig struct {
 }
 
 type TCPListenerConfig struct {
-	Address string `yaml:"address"`
+	Address []string `yaml:"address"`
+}
+
+func (t *TCPListenerConfig) UnmarshalYAML(node *yaml.Node) error {
+	var raw struct {
+		Address yaml.Node `yaml:"address"`
+	}
+	if err := node.Decode(&raw); err != nil {
+		return err
+	}
+
+	switch raw.Address.Kind {
+	case yaml.ScalarNode:
+		var addr string
+		if err := raw.Address.Decode(&addr); err != nil {
+			return err
+		}
+		t.Address = []string{addr}
+	case yaml.SequenceNode:
+		if err := raw.Address.Decode(&t.Address); err != nil {
+			return err
+		}
+	default:
+		return fmt.Errorf("address must be a string or array of strings")
+	}
+	return nil
 }
 
 type UnixListenerConfig struct {
@@ -81,31 +106,31 @@ type UpstreamTLSConfig struct {
 }
 
 type AuditConfig struct {
-	DenyPrivileged          bool               `yaml:"deny_privileged"`
-	DenySecurityOptOverride bool               `yaml:"deny_security_opt_override"`
-	DenyDevices             bool               `yaml:"deny_devices"`
-	DenyInfo                bool               `yaml:"deny_info"`
-	DenyOomKillDisable      bool               `yaml:"deny_oom_kill_disable"`
-	DenyPidsLimitOverride   bool               `yaml:"deny_pids_limit_override"`
-	DenyLogConfigOverride   bool               `yaml:"deny_log_config_override"`
-	DeniedCapabilities      []string           `yaml:"denied_capabilities"`
-	Sysctls                 SysctlsConfig      `yaml:"sysctls"`
-	BindMounts              BindMountsConfig   `yaml:"bind_mounts"`
-	Namespaces              NamespacesConfig   `yaml:"namespaces"`
-	Build                   BuildConfig        `yaml:"build"`
-	Pull                    PullConfig         `yaml:"pull"`
+	DenyPrivileged          bool             `yaml:"deny_privileged"`
+	DenySecurityOptOverride bool             `yaml:"deny_security_opt_override"`
+	DenyDevices             bool             `yaml:"deny_devices"`
+	DenyInfo                bool             `yaml:"deny_info"`
+	DenyOomKillDisable      bool             `yaml:"deny_oom_kill_disable"`
+	DenyPidsLimitOverride   bool             `yaml:"deny_pids_limit_override"`
+	DenyLogConfigOverride   bool             `yaml:"deny_log_config_override"`
+	DeniedCapabilities      []string         `yaml:"denied_capabilities"`
+	Sysctls                 SysctlsConfig    `yaml:"sysctls"`
+	BindMounts              BindMountsConfig `yaml:"bind_mounts"`
+	Namespaces              NamespacesConfig `yaml:"namespaces"`
+	Build                   BuildConfig      `yaml:"build"`
+	Pull                    PullConfig       `yaml:"pull"`
 }
 
 type BuildConfig struct {
 	// Policy controls build access: "deny" (default), "allow", or "list".
-	Policy  string   `yaml:"policy"`
+	Policy string `yaml:"policy"`
 	// Allowed is used when Policy is "list": image name prefixes matched against the tag parameter.
 	Allowed []string `yaml:"allowed,omitempty"`
 }
 
 type PullConfig struct {
 	// Policy controls image pull access: "allow" (default), "deny", or "list".
-	Policy  string   `yaml:"policy"`
+	Policy string `yaml:"policy"`
 	// Allowed is used when Policy is "list": image name/registry prefixes.
 	Allowed []string `yaml:"allowed,omitempty"`
 }

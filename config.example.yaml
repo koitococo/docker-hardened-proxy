@@ -1,6 +1,8 @@
 listeners:
   tcp:
-    address: "127.0.0.1:2375"
+    address:
+      - "127.0.0.1:2375"
+      # - "0.0.0.0:2375"  # 可以添加更多监听地址
   unix:
     path: "/var/run/docker-proxy.sock"
     mode: 0660
