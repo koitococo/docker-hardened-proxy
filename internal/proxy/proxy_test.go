@@ -532,6 +532,7 @@ func TestHandlerBuildMethodNotAllowed(t *testing.T) {
 func TestHandlerSessionDenied(t *testing.T) {
 	cfg := testCfg()
 	cfg.Audit.Build.Policy = "allow"
+	cfg.Audit.DenyBuildkit = true
 	h := newTestHandler(t, cfg, &mockDocker{})
 
 	req := httptest.NewRequest("POST", "/session", nil)
@@ -540,6 +541,21 @@ func TestHandlerSessionDenied(t *testing.T) {
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerSessionAllowed(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	cfg.Audit.DenyBuildkit = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/session", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
 }
 

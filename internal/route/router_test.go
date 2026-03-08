@@ -71,7 +71,7 @@ func TestParse(t *testing.T) {
 		{"/swarm/init", Denied, "", "/swarm/init"},
 		{"/services/create", Denied, "", "/services/create"},
 		{"/images/prune", Denied, "", "/images/prune"},
-		{"/session", Denied, "", "/session"},
+		{"/session", BuildKit, "", "/session"},
 	}
 
 	for _, tt := range tests {
