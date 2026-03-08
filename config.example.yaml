@@ -76,6 +76,10 @@ audit:
     # allowed:
     #   - "alpine"
     #   - "docker.io/library/"
+  # BuildKit gRPC endpoint (/grpc) used by "docker buildx".
+  # WARNING: Enabling BuildKit bypasses container creation audits (privileged, caps, bind mounts).
+  # Default: true (deny BuildKit)
+  deny_buildkit: true
 
 logging:
   level: "info"

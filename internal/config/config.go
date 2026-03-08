@@ -119,6 +119,7 @@ type AuditConfig struct {
 	Namespaces              NamespacesConfig `yaml:"namespaces"`
 	Build                   BuildConfig      `yaml:"build"`
 	Pull                    PullConfig       `yaml:"pull"`
+	DenyBuildkit            bool             `yaml:"deny_buildkit"`
 }
 
 type BuildConfig struct {

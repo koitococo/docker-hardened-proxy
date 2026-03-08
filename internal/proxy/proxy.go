@@ -133,6 +133,9 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleBuild(w, r)
 		return
+	case route.BuildKit:
+		h.handleBuildKit(w, r)
+		return
 	case route.Denied:
 		h.logger.Warn("denied",
 			"endpoint", info.Kind.String(),
@@ -250,6 +253,22 @@ func (h *Handler) handleBuild(w http.ResponseWriter, r *http.Request) {
 	r.URL.RawQuery = result.Query.Encode()
 
 	h.logger.Info("build allowed")
+	h.forward(w, r)
+}
+
+func (h *Handler) handleBuildKit(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Audit.DenyBuildkit {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit",
+			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
+		)
+		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		return
+	}
+
+	h.logger.Warn("buildkit allowed - security warning: buildkit bypasses container creation audits",
+		"path", r.URL.Path,
+	)
 	h.forward(w, r)
 }
 

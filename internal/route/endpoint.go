@@ -22,6 +22,8 @@ const (
 	ImagePull
 	// SystemInfo is GET /info.
 	SystemInfo
+	// BuildKit is the gRPC endpoint for BuildKit (/grpc).
+	BuildKit
 	// Denied endpoints are blocked by default (unrecognized/dangerous paths).
 	Denied
 )
@@ -44,6 +46,8 @@ func (k EndpointKind) String() string {
 		return "image_pull"
 	case SystemInfo:
 		return "system_info"
+	case BuildKit:
+		return "buildkit"
 	case Denied:
 		return "denied"
 	default:

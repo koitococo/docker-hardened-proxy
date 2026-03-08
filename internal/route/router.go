@@ -126,7 +126,7 @@ var safeImageIDActions = map[string]bool{
 }
 
 func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
-	// Single-segment paths: /_ping, /version, /info, /build
+	// Single-segment paths: /_ping, /version, /info, /build, /grpc
 	if len(parts) == 1 {
 		if safePassthroughPaths[parts[0]] {
 			return info // Kind remains Passthrough
@@ -137,6 +137,10 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 		}
 		if parts[0] == "info" {
 			info.Kind = SystemInfo
+			return info
+		}
+		if parts[0] == "grpc" {
+			info.Kind = BuildKit
 			return info
 		}
 		info.Kind = Denied

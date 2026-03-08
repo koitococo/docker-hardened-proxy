@@ -54,6 +54,8 @@ func TestParse(t *testing.T) {
 		{"/version", Passthrough, "", "/version"},
 		{"/info", SystemInfo, "", "/info"},
 		{"/_ping", Passthrough, "", "/_ping"},
+		{"/grpc", BuildKit, "", "/grpc"},
+		{"/v1.41/grpc", BuildKit, "", "/grpc"},
 		{"/", Passthrough, "", "/"},
 
 		// Build
@@ -125,6 +127,7 @@ func TestEndpointKindString(t *testing.T) {
 		{Build, "build"},
 		{ImagePull, "image_pull"},
 		{SystemInfo, "system_info"},
+		{BuildKit, "buildkit"},
 		{Denied, "denied"},
 	}
 	for _, tt := range tests {
