@@ -169,8 +169,8 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 				info.Kind = ImagePush
 				return info
 			}
-			// /images/{id}/json (inspect), /images/{id}/tag (id is typically single segment)
-			if len(parts) == 3 && safeImageIDActions[parts[2]] {
+			// /images/{name}/json (inspect), /images/{name}/tag (name can contain slashes)
+			if parts[len(parts)-1] == "json" || parts[len(parts)-1] == "tag" {
 				return info
 			}
 		}

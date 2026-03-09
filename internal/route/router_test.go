@@ -51,6 +51,11 @@ func TestParse(t *testing.T) {
 		{"/images/create", ImagePull, "", "/images/create"},
 		{"/images/abc123/json", Passthrough, "", "/images/abc123/json"},
 		{"/images/abc123/tag", Passthrough, "", "/images/abc123/tag"},
+		// Multi-segment image names for json/tag endpoints
+		{"/images/registry.ltkk.run/slxd/gateway/json", Passthrough, "", "/images/registry.ltkk.run/slxd/gateway/json"},
+		{"/v1.51/images/registry.ltkk.run/slxd/gateway:latest/json", Passthrough, "", "/images/registry.ltkk.run/slxd/gateway:latest/json"},
+		{"/images/registry.ltkk.run/slxd/gateway/tag", Passthrough, "", "/images/registry.ltkk.run/slxd/gateway/tag"},
+		{"/v1.41/images/myregistry.com/namespace/image:v1.0/tag", Passthrough, "", "/images/myregistry.com/namespace/image:v1.0/tag"},
 		{"/version", Passthrough, "", "/version"},
 		{"/info", SystemInfo, "", "/info"},
 		{"/_ping", Passthrough, "", "/_ping"},
