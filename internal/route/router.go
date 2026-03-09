@@ -113,7 +113,6 @@ func parseExecRoute(parts []string, info RouteInfo) RouteInfo {
 var safePassthroughPaths = map[string]bool{
 	"_ping":   true,
 	"version": true,
-	"auth":    true,
 }
 
 // safePassthroughPrefixes covers paths like /images/json, /images/{id}/json, /images/{id}/tag, /images/create.
@@ -127,10 +126,14 @@ var safeImageIDActions = map[string]bool{
 }
 
 func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
-	// Single-segment paths: /_ping, /version, /info, /build, /grpc
+	// Single-segment paths: /_ping, /version, /info, /build, /grpc, /auth
 	if len(parts) == 1 {
 		if safePassthroughPaths[parts[0]] {
 			return info // Kind remains Passthrough
+		}
+		if parts[0] == "auth" {
+			info.Kind = Auth
+			return info
 		}
 		if parts[0] == "build" {
 			info.Kind = Build
@@ -161,18 +164,17 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 			}
 		}
 		if len(parts) == 3 {
+			// /images/{name}/push - image push endpoint
+			if parts[2] == "push" {
+				info.Kind = ImagePush
+				return info
+			}
 			// /images/{id}/json (inspect), /images/{id}/tag
 			if safeImageIDActions[parts[2]] {
 				return info
 			}
 		}
 		info.Kind = Denied
-		return info
-	}
-
-	// /images/{name}/push - image push endpoint
-	if parts[0] == "images" && len(parts) == 3 && parts[2] == "push" {
-		info.Kind = ImagePush
 		return info
 	}
 
