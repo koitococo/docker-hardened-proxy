@@ -76,6 +76,21 @@ audit:
     # allowed:
     #   - "alpine"
     #   - "docker.io/library/"
+  registry:
+    # "deny" (default): block all registry authentication and image push
+    # "allow": allow all registry operations
+    # "list": allow only for listed registries/images
+    auth: "deny"
+    # For "list" policy: allowed registry URL prefixes for authentication
+    # auth_allowed:
+    #   - "https://registry.example.com"
+    #   - "registry.example.com"
+    push: "deny"
+    # For "list" policy: allowed image name prefixes for push
+    # push_allowed:
+    #   - "registry.example.com/myapp/"
+    #   - "myregistry.com/"
+
   # BuildKit gRPC endpoint (/grpc) used by "docker buildx".
   # WARNING: Enabling BuildKit bypasses container creation audits (privileged, caps, bind mounts).
   # Default: true (deny BuildKit)
