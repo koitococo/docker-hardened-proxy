@@ -287,7 +287,15 @@ func (h *Handler) handleBuildKit(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
-	result := audit.AuditAuth(r.URL.Query(), h.cfg)
+	r.Body = http.MaxBytesReader(w, r.Body, maxCreateBodySize)
+	defer r.Body.Close()
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, "request body too large or unreadable", http.StatusRequestEntityTooLarge)
+		return
+	}
+
+	result := audit.AuditAuth(body, h.cfg)
 	if result.Denied {
 		h.logger.Warn("denied",
 			"endpoint", "auth",
@@ -296,6 +304,11 @@ func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
 		return
 	}
+
+	// Restore body for forwarding
+	r.Body = io.NopCloser(bytes.NewReader(body))
+	r.ContentLength = int64(len(body))
+	r.Header.Set("Content-Length", strconv.Itoa(len(body)))
 
 	h.logger.Info("registry authentication allowed")
 	h.forward(w, r)

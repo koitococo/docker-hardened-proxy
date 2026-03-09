@@ -1,6 +1,8 @@
 package audit
 
 import (
+	"encoding/json"
+	"fmt"
 	"net/url"
 	"strings"
 
@@ -13,11 +15,25 @@ type RegistryAuditResult struct {
 	Reason string
 }
 
+// AuthRequest represents the JSON body sent to the /auth endpoint.
+type AuthRequest struct {
+	Username      string `json:"username"`
+	Password      string `json:"password"`
+	ServerAddress string `json:"serveraddress"`
+}
+
 // AuditAuth checks if registry authentication is allowed.
-// The serveraddress parameter contains the registry URL.
-func AuditAuth(query url.Values, cfg *config.Config) RegistryAuditResult {
+// The serveraddress is extracted from the request body JSON.
+func AuditAuth(body []byte, cfg *config.Config) RegistryAuditResult {
 	policy := cfg.Audit.Registry.Auth
-	serverAddress := query.Get("serveraddress")
+
+	var authReq AuthRequest
+	if err := json.Unmarshal(body, &authReq); err != nil {
+		return RegistryAuditResult{
+			Denied: true,
+			Reason: fmt.Sprintf("registry authentication denied: invalid JSON body: %v", err),
+		}
+	}
 
 	switch policy {
 	case "allow":
@@ -28,14 +44,14 @@ func AuditAuth(query url.Values, cfg *config.Config) RegistryAuditResult {
 			Reason: "registry authentication is denied by policy (audit.registry.auth)",
 		}
 	case "list":
-		if serverAddress == "" {
+		if authReq.ServerAddress == "" {
 			return RegistryAuditResult{
 				Denied: true,
-				Reason: "registry authentication denied: serveraddress parameter is required",
+				Reason: "registry authentication denied: serveraddress is required in request body",
 			}
 		}
 		for _, allowed := range cfg.Audit.Registry.AuthAllowed {
-			if strings.HasPrefix(serverAddress, allowed) {
+			if strings.HasPrefix(authReq.ServerAddress, allowed) {
 				return RegistryAuditResult{Denied: false}
 			}
 		}

@@ -1,7 +1,7 @@
 package audit
 
 import (
-	"net/url"
+	"encoding/json"
 	"testing"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -48,7 +48,7 @@ func TestAuditAuth(t *testing.T) {
 			policy:     "list",
 			allowed:    []string{"https://registry.example.com"},
 			wantDenied: true,
-			wantReason: "serveraddress parameter is required",
+			wantReason: "serveraddress is required",
 		},
 		{
 			name:       "empty policy defaults to deny",
@@ -68,12 +68,18 @@ func TestAuditAuth(t *testing.T) {
 					},
 				},
 			}
-			query := url.Values{}
-			if tt.serverAddress != "" {
-				query.Set("serveraddress", tt.serverAddress)
+
+			authReq := AuthRequest{
+				Username:      "testuser",
+				Password:      "testpass",
+				ServerAddress: tt.serverAddress,
+			}
+			body, err := json.Marshal(authReq)
+			if err != nil {
+				t.Fatalf("failed to marshal auth request: %v", err)
 			}
 
-			result := AuditAuth(query, cfg)
+			result := AuditAuth(body, cfg)
 			if result.Denied != tt.wantDenied {
 				t.Errorf("AuditAuth() Denied = %v, want %v", result.Denied, tt.wantDenied)
 			}
@@ -81,6 +87,27 @@ func TestAuditAuth(t *testing.T) {
 				t.Errorf("AuditAuth() Reason = %q, want containing %q", result.Reason, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestAuditAuthInvalidJSON(t *testing.T) {
+	cfg := &config.Config{
+		Audit: config.AuditConfig{
+			Registry: config.RegistryConfig{
+				Auth:        "list",
+				AuthAllowed: []string{"https://registry.example.com"},
+			},
+		},
+	}
+
+	invalidBody := []byte("not valid json")
+	result := AuditAuth(invalidBody, cfg)
+
+	if !result.Denied {
+		t.Error("AuditAuth() should deny invalid JSON")
+	}
+	if !contains(result.Reason, "invalid JSON") {
+		t.Errorf("AuditAuth() Reason = %q, want containing 'invalid JSON'", result.Reason)
 	}
 }
 
@@ -145,9 +172,9 @@ func TestAuditPush(t *testing.T) {
 					},
 				},
 			}
-			query := url.Values{}
+			query := make(map[string][]string)
 			if tt.imageName != "" {
-				query.Set("name", tt.imageName)
+				query["name"] = []string{tt.imageName}
 			}
 
 			result := AuditPush(query, cfg)
