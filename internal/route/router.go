@@ -178,6 +178,16 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 		return info
 	}
 
+	// /distribution/* - Distribution API for manifest inspection
+	if parts[0] == "distribution" {
+		// /distribution/{name}/json - inspect image manifest in registry
+		if len(parts) >= 3 && parts[len(parts)-1] == "json" {
+			return info
+		}
+		info.Kind = Denied
+		return info
+	}
+
 	// Everything else is denied
 	info.Kind = Denied
 	return info

@@ -78,6 +78,10 @@ func TestParse(t *testing.T) {
 		{"/v1.41/build", Build, "", "/build"},
 		{"/build?t=myimage", Build, "", "/build?t=myimage"},
 
+		// Distribution API (manifest inspection)
+		{"/distribution/myimage/json", Passthrough, "", "/distribution/myimage/json"},
+		{"/v1.51/distribution/registry.ltkk.run/slxd/gateway:latest/json", Passthrough, "", "/distribution/registry.ltkk.run/slxd/gateway:latest/json"},
+
 		// Denied (dangerous endpoints)
 		{"/commit", Denied, "", "/commit"},
 		{"/events", Denied, "", "/events"},
