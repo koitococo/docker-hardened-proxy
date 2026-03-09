@@ -136,6 +136,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case route.BuildKit:
 		h.handleBuildKit(w, r)
 		return
+	case route.Auth:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.handleAuth(w, r)
+		return
+	case route.ImagePush:
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		h.handleImagePush(w, r)
+		return
 	case route.Denied:
 		h.logger.Warn("denied",
 			"endpoint", info.Kind.String(),
@@ -269,6 +283,36 @@ func (h *Handler) handleBuildKit(w http.ResponseWriter, r *http.Request) {
 	h.logger.Warn("buildkit allowed - security warning: buildkit bypasses container creation audits",
 		"path", r.URL.Path,
 	)
+	h.forward(w, r)
+}
+
+func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
+	result := audit.AuditAuth(r.URL.Query(), h.cfg)
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "auth",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	h.logger.Info("registry authentication allowed")
+	h.forward(w, r)
+}
+
+func (h *Handler) handleImagePush(w http.ResponseWriter, r *http.Request) {
+	result := audit.AuditPush(r.URL.Query(), h.cfg)
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "image_push",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	h.logger.Info("image push allowed")
 	h.forward(w, r)
 }
 
