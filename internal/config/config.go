@@ -119,6 +119,7 @@ type AuditConfig struct {
 	Namespaces              NamespacesConfig `yaml:"namespaces"`
 	Build                   BuildConfig      `yaml:"build"`
 	Pull                    PullConfig       `yaml:"pull"`
+	Registry                RegistryConfig   `yaml:"registry"`
 	DenyBuildkit            bool             `yaml:"deny_buildkit"`
 }
 
@@ -134,6 +135,17 @@ type PullConfig struct {
 	Policy string `yaml:"policy"`
 	// Allowed is used when Policy is "list": image name/registry prefixes.
 	Allowed []string `yaml:"allowed,omitempty"`
+}
+
+type RegistryConfig struct {
+	// Auth controls registry authentication: "deny" (default), "allow", or "list".
+	Auth string `yaml:"auth"`
+	// AuthAllowed is used when Auth is "list": registry URL prefixes allowed for authentication.
+	AuthAllowed []string `yaml:"auth_allowed,omitempty"`
+	// Push controls image push: "deny" (default), "allow", or "list".
+	Push string `yaml:"push"`
+	// PushAllowed is used when Push is "list": image name prefixes allowed for push.
+	PushAllowed []string `yaml:"push_allowed,omitempty"`
 }
 
 type SysctlsConfig struct {
@@ -271,6 +283,28 @@ func (c *Config) validate() error {
 	}
 	if c.Audit.Pull.Policy == "list" && len(c.Audit.Pull.Allowed) == 0 {
 		return fmt.Errorf("audit.pull.allowed must not be empty when policy is 'list'")
+	}
+
+	// Validate registry auth policy
+	registryAuthPolicy := c.Audit.Registry.Auth
+	if registryAuthPolicy == "" {
+		c.Audit.Registry.Auth = "deny"
+	} else if registryAuthPolicy != "deny" && registryAuthPolicy != "allow" && registryAuthPolicy != "list" {
+		return fmt.Errorf("audit.registry.auth must be 'deny', 'allow', or 'list', got %q", registryAuthPolicy)
+	}
+	if c.Audit.Registry.Auth == "list" && len(c.Audit.Registry.AuthAllowed) == 0 {
+		return fmt.Errorf("audit.registry.auth_allowed must not be empty when auth policy is 'list'")
+	}
+
+	// Validate registry push policy
+	registryPushPolicy := c.Audit.Registry.Push
+	if registryPushPolicy == "" {
+		c.Audit.Registry.Push = "deny"
+	} else if registryPushPolicy != "deny" && registryPushPolicy != "allow" && registryPushPolicy != "list" {
+		return fmt.Errorf("audit.registry.push must be 'deny', 'allow', or 'list', got %q", registryPushPolicy)
+	}
+	if c.Audit.Registry.Push == "list" && len(c.Audit.Registry.PushAllowed) == 0 {
+		return fmt.Errorf("audit.registry.push_allowed must not be empty when push policy is 'list'")
 	}
 
 	level := c.Logging.Level
