@@ -172,12 +172,8 @@ func TestAuditPush(t *testing.T) {
 					},
 				},
 			}
-			query := make(map[string][]string)
-			if tt.imageName != "" {
-				query["name"] = []string{tt.imageName}
-			}
 
-			result := AuditPush(query, cfg)
+			result := AuditPush(tt.imageName, cfg)
 			if result.Denied != tt.wantDenied {
 				t.Errorf("AuditPush() Denied = %v, want %v", result.Denied, tt.wantDenied)
 			}

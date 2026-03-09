@@ -649,3 +649,61 @@ func TestHandlerInfoAllowed(t *testing.T) {
 		t.Errorf("status = %d, want %d; body: %s", w.Code, http.StatusOK, w.Body.String())
 	}
 }
+
+func TestExtractImageNameFromPushPath(t *testing.T) {
+	tests := []struct {
+		name     string
+		path     string
+		expected string
+	}{
+		{
+			name:     "simple image with version",
+			path:     "/v1.52/images/myimage/push",
+			expected: "myimage",
+		},
+		{
+			name:     "multi-segment image with version",
+			path:     "/v1.52/images/registry.ltkk.run/slxd/operator/push",
+			expected: "registry.ltkk.run/slxd/operator",
+		},
+		{
+			name:     "with query string",
+			path:     "/v1.52/images/myimage/push?tag=latest",
+			expected: "myimage",
+		},
+		{
+			name:     "multi-segment with query",
+			path:     "/v1.52/images/registry.ltkk.run/slxd/operator/push?tag=latest",
+			expected: "registry.ltkk.run/slxd/operator",
+		},
+		{
+			name:     "without version prefix",
+			path:     "/images/myimage/push",
+			expected: "myimage",
+		},
+		{
+			name:     "with tag in name",
+			path:     "/v1.41/images/myimage:v1/push",
+			expected: "myimage:v1",
+		},
+		{
+			name:     "invalid path - no push",
+			path:     "/v1.52/images/myimage/tag",
+			expected: "",
+		},
+		{
+			name:     "invalid path - too short",
+			path:     "/v1.52/images/push",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := extractImageNameFromPushPath(tt.path)
+			if result != tt.expected {
+				t.Errorf("extractImageNameFromPushPath(%q) = %q, want %q", tt.path, result, tt.expected)
+			}
+		})
+	}
+}

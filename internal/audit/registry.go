@@ -3,7 +3,6 @@ package audit
 import (
 	"encoding/json"
 	"fmt"
-	"net/url"
 	"strings"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -68,10 +67,9 @@ func AuditAuth(body []byte, cfg *config.Config) RegistryAuditResult {
 }
 
 // AuditPush checks if image push is allowed.
-// The name parameter contains the image name (from query string).
-func AuditPush(query url.Values, cfg *config.Config) RegistryAuditResult {
+// The imageName contains the image name (extracted from URL path).
+func AuditPush(imageName string, cfg *config.Config) RegistryAuditResult {
 	policy := cfg.Audit.Registry.Push
-	imageName := query.Get("name")
 
 	switch policy {
 	case "allow":

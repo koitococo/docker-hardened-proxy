@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httputil"
 	"strconv"
+	"strings"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/audit"
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -315,7 +316,10 @@ func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) handleImagePush(w http.ResponseWriter, r *http.Request) {
-	result := audit.AuditPush(r.URL.Query(), h.cfg)
+	// Extract image name from path: /v1.52/images/{name}/push -> {name}
+	imageName := extractImageNameFromPushPath(r.URL.Path)
+
+	result := audit.AuditPush(imageName, h.cfg)
 	if result.Denied {
 		h.logger.Warn("denied",
 			"endpoint", "image_push",
@@ -327,6 +331,46 @@ func (h *Handler) handleImagePush(w http.ResponseWriter, r *http.Request) {
 
 	h.logger.Info("image push allowed")
 	h.forward(w, r)
+}
+
+// extractImageNameFromPushPath extracts the image name from a push endpoint path.
+// Path format: /[v{version}/]images/{name}/push
+func extractImageNameFromPushPath(path string) string {
+	// Strip query string if present
+	if idx := strings.IndexByte(path, '?'); idx >= 0 {
+		path = path[:idx]
+	}
+
+	// Split path into segments
+	parts := strings.Split(path, "/")
+
+	// Remove empty leading segment and version prefix if present
+	if len(parts) > 0 && parts[0] == "" {
+		parts = parts[1:]
+	}
+
+	// Check if first part is a version (starts with 'v' followed by digits/dots)
+	if len(parts) > 0 && len(parts[0]) > 1 && parts[0][0] == 'v' {
+		isVersion := true
+		for i := 1; i < len(parts[0]); i++ {
+			c := parts[0][i]
+			if c != '.' && (c < '0' || c > '9') {
+				isVersion = false
+				break
+			}
+		}
+		if isVersion {
+			parts = parts[1:]
+		}
+	}
+
+	// Now should be: ["images", {name parts...}, "push"]
+	if len(parts) < 3 || parts[0] != "images" || parts[len(parts)-1] != "push" {
+		return ""
+	}
+
+	// Join the middle parts as the image name
+	return strings.Join(parts[1:len(parts)-1], "/")
 }
 
 func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) {
