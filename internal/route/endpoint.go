@@ -24,6 +24,10 @@ const (
 	SystemInfo
 	// BuildKit is the gRPC endpoint for BuildKit (/grpc).
 	BuildKit
+	// Auth is POST /auth (registry authentication).
+	Auth
+	// ImagePush is POST /images/{name}/push.
+	ImagePush
 	// Denied endpoints are blocked by default (unrecognized/dangerous paths).
 	Denied
 )
@@ -48,6 +52,10 @@ func (k EndpointKind) String() string {
 		return "system_info"
 	case BuildKit:
 		return "buildkit"
+	case Auth:
+		return "auth"
+	case ImagePush:
+		return "image_push"
 	case Denied:
 		return "denied"
 	default:
