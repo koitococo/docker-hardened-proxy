@@ -65,6 +65,8 @@ func TestParse(t *testing.T) {
 		// Image push
 		{"/images/myimage/push", ImagePush, "", "/images/myimage/push"},
 		{"/v1.41/images/myimage/push", ImagePush, "", "/images/myimage/push"},
+		{"/images/registry.ltkk.run/slxd/operator/push", ImagePush, "", "/images/registry.ltkk.run/slxd/operator/push"},
+		{"/v1.52/images/registry.ltkk.run/slxd/operator/push", ImagePush, "", "/images/registry.ltkk.run/slxd/operator/push"},
 
 		// Build
 		{"/build", Build, "", "/build"},
