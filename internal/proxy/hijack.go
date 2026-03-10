@@ -15,6 +15,18 @@ func isUpgradeRequest(r *http.Request) bool {
 		strings.EqualFold(r.Header.Get("Connection"), "Upgrade")
 }
 
+func isH2CUpgradeRequest(r *http.Request) bool {
+	if !strings.EqualFold(r.Header.Get("Upgrade"), "h2c") {
+		return false
+	}
+	for _, token := range strings.Split(r.Header.Get("Connection"), ",") {
+		if strings.EqualFold(strings.TrimSpace(token), "Upgrade") {
+			return true
+		}
+	}
+	return false
+}
+
 // hijackProxy handles bidirectional streaming for Docker attach/exec/logs.
 // It hijacks both the client connection and the upstream connection, then
 // copies data bidirectionally.

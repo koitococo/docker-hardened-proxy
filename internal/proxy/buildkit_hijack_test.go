@@ -3,8 +3,12 @@ package proxy
 import (
 	"bytes"
 	"encoding/binary"
+	"fmt"
+	"io"
 	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	control "github.com/moby/buildkit/api/services/control"
 	pb "github.com/moby/buildkit/solver/pb"
@@ -151,9 +155,11 @@ func TestProxyBuildKitControlFramesClosesConnectionOnLaterDeniedSolve(t *testing
 		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: safePayload},
 		buildKitControlRequestSpec{StreamID: 3, MethodPath: buildKitControlSolveMethod, Payload: unsafePayload},
 	)
-	wantForwarded := buildBuildKitControlConnection(t,
+	firstAllowed := buildBuildKitControlConnection(t,
 		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: safePayload},
 	)
+	secondHeaders := buildBuildKitControlHeadersChunk(t, 3, buildKitControlSolveMethod, false)
+	wantForwardedPrefix := append(firstAllowed, secondHeaders...)
 
 	var forwarded bytes.Buffer
 	err := proxyBuildKitControlFrames(bytes.NewReader(raw), &forwarded, cfg)
@@ -163,8 +169,40 @@ func TestProxyBuildKitControlFramesClosesConnectionOnLaterDeniedSolve(t *testing
 	if !strings.Contains(err.Error(), "network.host") {
 		t.Fatalf("error = %q, want solve deny reason", err)
 	}
-	if !bytes.Equal(forwarded.Bytes(), wantForwarded) {
-		t.Fatal("expected only frames before denied request to be forwarded")
+	if !bytes.Equal(forwarded.Bytes(), wantForwardedPrefix) {
+		t.Fatal("expected denied solve to forward only pre-message bytes")
+	}
+}
+
+func TestProxyBuildKitControlFramesStreamsSafeSolveBeforeFullAuditCompletes(t *testing.T) {
+	cfg := testCfg()
+	largeSolve := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("safe", 6000)})
+	firstChunk, secondChunk, expectedPrefix := buildSplitBuildKitControlSolveRequest(t, 1, largeSolve, 16384)
+
+	clientReader, clientWriter := io.Pipe()
+	upstreamWriter := &waitBuffer{}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- proxyBuildKitControlFrames(clientReader, upstreamWriter, cfg)
+	}()
+
+	if _, err := clientWriter.Write(firstChunk); err != nil {
+		t.Fatalf("write first chunk: %v", err)
+	}
+	forwardedPrefix, err := upstreamWriter.WaitFor(len(expectedPrefix), 250*time.Millisecond)
+	if err != nil {
+		t.Fatalf("expected early forwarded bytes, got error: %v", err)
+	}
+	if !bytes.Equal(forwardedPrefix, expectedPrefix) {
+		t.Fatal("expected safe solve prefix to be forwarded before full audit completes")
+	}
+
+	if _, err := clientWriter.Write(secondChunk); err != nil {
+		t.Fatalf("write second chunk: %v", err)
+	}
+	clientWriter.Close()
+	if err := <-errCh; err != nil {
+		t.Fatalf("unexpected proxy error: %v", err)
 	}
 }
 
@@ -298,6 +336,22 @@ func buildBuildKitControlConnection(t *testing.T, specs ...buildKitControlReques
 	return raw.Bytes()
 }
 
+func buildBuildKitControlHeadersChunk(t *testing.T, streamID uint32, methodPath string, endStream bool) []byte {
+	t.Helper()
+
+	var raw bytes.Buffer
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: encodeBuildKitControlHeaders(t, methodPath),
+		EndHeaders:    true,
+		EndStream:     endStream,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	return raw.Bytes()
+}
+
 func mustMarshalBuildKitProto(t *testing.T, msg proto.Message) []byte {
 	t.Helper()
 	payload, err := proto.Marshal(msg)
@@ -305,4 +359,87 @@ func mustMarshalBuildKitProto(t *testing.T, msg proto.Message) []byte {
 		t.Fatalf("marshal proto: %v", err)
 	}
 	return payload
+}
+
+func buildSplitBuildKitControlSolveRequest(t *testing.T, streamID uint32, payload []byte, firstFramePayloadLen int) ([]byte, []byte, []byte) {
+	t.Helper()
+
+	envelope := make([]byte, 5+len(payload))
+	binary.BigEndian.PutUint32(envelope[1:5], uint32(len(payload)))
+	copy(envelope[5:], payload)
+	if firstFramePayloadLen <= 0 || firstFramePayloadLen >= len(envelope) {
+		t.Fatalf("invalid firstFramePayloadLen %d for envelope size %d", firstFramePayloadLen, len(envelope))
+	}
+
+	var first bytes.Buffer
+	first.WriteString(http2.ClientPreface)
+	framer := http2.NewFramer(&first, nil)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      streamID,
+		BlockFragment: encodeBuildKitControlHeaders(t, buildKitControlSolveMethod),
+		EndHeaders:    true,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	if err := framer.WriteData(streamID, false, envelope[:firstFramePayloadLen]); err != nil {
+		t.Fatalf("write first data frame: %v", err)
+	}
+
+	var second bytes.Buffer
+	framer = http2.NewFramer(&second, nil)
+	if err := framer.WriteData(streamID, true, envelope[firstFramePayloadLen:]); err != nil {
+		t.Fatalf("write second data frame: %v", err)
+	}
+
+	return first.Bytes(), second.Bytes(), first.Bytes()
+}
+
+func readWithTimeout(r io.Reader, p []byte, timeout time.Duration) (int, error) {
+	type result struct {
+		n   int
+		err error
+	}
+	ch := make(chan result, 1)
+	go func() {
+		n, err := io.ReadFull(r, p)
+		ch <- result{n: n, err: err}
+	}()
+
+	select {
+	case res := <-ch:
+		return res.n, res.err
+	case <-time.After(timeout):
+		return 0, fmt.Errorf("read timed out after %s", timeout)
+	}
+}
+
+type waitBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (w *waitBuffer) Write(p []byte) (int, error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+
+func (w *waitBuffer) WaitFor(n int, timeout time.Duration) ([]byte, error) {
+	deadline := time.Now().Add(timeout)
+	for {
+		w.mu.Lock()
+		if w.buf.Len() >= n {
+			data := bytes.Clone(w.buf.Bytes()[:n])
+			w.mu.Unlock()
+			return data, nil
+		}
+		w.mu.Unlock()
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("buffer did not reach %d bytes within %s", n, timeout)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }

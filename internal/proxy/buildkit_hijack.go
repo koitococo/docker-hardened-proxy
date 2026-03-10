@@ -41,11 +41,17 @@ type buildKitControlInspection struct {
 }
 
 type buildKitControlStreamState struct {
-	MethodPath    string
-	Allowed       bool
-	BufferedBytes bytes.Buffer
-	GRPCData      bytes.Buffer
-	MessageLength int
+	MethodPath       string
+	Allowed          bool
+	PendingFrames    []buildKitBufferedFrame
+	PendingGRPCBytes int
+	GRPCData         bytes.Buffer
+	MessageLength    int
+}
+
+type buildKitBufferedFrame struct {
+	raw       []byte
+	grpcBytes int
 }
 
 type frameCaptureReader struct {
@@ -404,6 +410,10 @@ func isBuildKitUnaryMethod(methodPath string) bool {
 	}
 }
 
+func isBuildKitSolveMethod(methodPath string) bool {
+	return methodPath == buildKitControlSolveMethod
+}
+
 func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, headers *http2.HeadersFrame, path string, rawFrame []byte, cfg *config.Config) error {
 	streamID := headers.Header().StreamID
 	state, ok := streams[streamID]
@@ -416,7 +426,7 @@ func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKi
 				return err
 			}
 		} else {
-			state.BufferedBytes.Write(rawFrame)
+			bufferBuildKitFrame(state, rawFrame, 0)
 		}
 		if headers.StreamEnded() {
 			delete(streams, streamID)
@@ -432,18 +442,19 @@ func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKi
 	if reason := denyBuildKitControlMethod(path, cfg); reason != "" {
 		return errors.New(reason)
 	}
-	if !isBuildKitUnaryMethod(path) {
+	if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+		return err
+	}
+	if !isBuildKitSolveMethod(path) {
 		state.Allowed = true
-		if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
-			return err
-		}
 		if headers.StreamEnded() {
 			delete(streams, streamID)
 		}
 		return nil
 	}
-
-	state.BufferedBytes.Write(rawFrame)
+	if headers.StreamEnded() {
+		return fmt.Errorf("truncated gRPC message")
+	}
 	return nil
 }
 
@@ -463,7 +474,7 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 		return nil
 	}
 
-	state.BufferedBytes.Write(rawFrame)
+	bufferBuildKitFrame(state, rawFrame, len(frame.Data()))
 	state.GRPCData.Write(frame.Data())
 	if state.MessageLength < 0 && state.GRPCData.Len() >= 5 {
 		envelope := state.GRPCData.Bytes()
@@ -475,7 +486,13 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 			return fmt.Errorf("gRPC message length %d exceeds limit %d", state.MessageLength, buildKitControlMaxMessageSize)
 		}
 	}
+	if err := flushBuildKitSolvePrefix(upstream, state); err != nil {
+		return err
+	}
 	if state.MessageLength >= 0 && state.GRPCData.Len() >= 5+state.MessageLength {
+		if state.GRPCData.Len() > 5+state.MessageLength {
+			return fmt.Errorf("unexpected extra gRPC payload in unary request")
+		}
 		payload := bytes.Clone(state.GRPCData.Bytes()[5 : 5+state.MessageLength])
 		result, err := auditBuildKitControlPayload(state.MethodPath, payload, cfg)
 		if err != nil {
@@ -485,10 +502,9 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 			return errors.New(result.Reason)
 		}
 		state.Allowed = true
-		if err := writeRawBuildKitFrame(upstream, state.BufferedBytes.Bytes()); err != nil {
+		if err := flushAllBuildKitFrames(upstream, state); err != nil {
 			return err
 		}
-		state.BufferedBytes.Reset()
 		if frame.StreamEnded() {
 			delete(streams, streamID)
 		}
@@ -508,7 +524,47 @@ func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKit
 	if !ok || state.Allowed {
 		return writeRawBuildKitFrame(upstream, rawFrame)
 	}
-	state.BufferedBytes.Write(rawFrame)
+	bufferBuildKitFrame(state, rawFrame, 0)
+	return nil
+}
+
+func bufferBuildKitFrame(state *buildKitControlStreamState, rawFrame []byte, grpcBytes int) {
+	state.PendingFrames = append(state.PendingFrames, buildKitBufferedFrame{
+		raw:       bytes.Clone(rawFrame),
+		grpcBytes: grpcBytes,
+	})
+	state.PendingGRPCBytes += grpcBytes
+}
+
+func flushBuildKitSolvePrefix(upstream io.Writer, state *buildKitControlStreamState) error {
+	if state.MessageLength < 0 {
+		return nil
+	}
+	fullMessageBytes := 5 + state.MessageLength
+	for len(state.PendingFrames) > 0 {
+		frame := state.PendingFrames[0]
+		forwardedGRPCBytes := state.GRPCData.Len() - state.PendingGRPCBytes
+		if frame.grpcBytes > 0 && forwardedGRPCBytes+frame.grpcBytes >= fullMessageBytes {
+			break
+		}
+		if err := writeRawBuildKitFrame(upstream, frame.raw); err != nil {
+			return err
+		}
+		state.PendingGRPCBytes -= frame.grpcBytes
+		state.PendingFrames = state.PendingFrames[1:]
+	}
+	return nil
+}
+
+func flushAllBuildKitFrames(upstream io.Writer, state *buildKitControlStreamState) error {
+	for len(state.PendingFrames) > 0 {
+		frame := state.PendingFrames[0]
+		if err := writeRawBuildKitFrame(upstream, frame.raw); err != nil {
+			return err
+		}
+		state.PendingGRPCBytes -= frame.grpcBytes
+		state.PendingFrames = state.PendingFrames[1:]
+	}
 	return nil
 }
 

@@ -1,22 +1,26 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	control "github.com/moby/buildkit/api/services/control"
 	pb "github.com/moby/buildkit/solver/pb"
+	"golang.org/x/net/http2"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -553,15 +557,32 @@ func TestHandlerSessionAllowed(t *testing.T) {
 	cfg.Audit.DenyBuildkit = false
 	cfg.Audit.BuildKit.Session.AllowFilesync = true
 	cfg.Audit.BuildKit.Session.AllowUpload = true
+	done := startBuildKitSessionUpstream(t, cfg)
 	h := newTestHandler(t, cfg, &mockDocker{})
+	server := httptest.NewServer(h)
+	t.Cleanup(server.Close)
 
-	req := httptest.NewRequest("POST", "/session", nil)
-	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.filesync.v1.FileSync/DiffCopy")
-	w := httptest.NewRecorder()
-	h.ServeHTTP(w, req)
+	conn, reader, resp := openBuildKitUpgradeConn(t, server, "/session", http.Header{
+		"X-Docker-Expose-Session-Grpc-Method": []string{"/moby.filesync.v1.FileSync/DiffCopy"},
+	})
+	defer conn.Close()
 
-	if w.Code != http.StatusOK {
-		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		t.Fatalf("status = %d, want %d", resp.StatusCode, http.StatusSwitchingProtocols)
+	}
+	if _, err := conn.Write([]byte(http2.ClientPreface)); err != nil {
+		t.Fatalf("write HTTP/2 preface: %v", err)
+	}
+	framer := http2.NewFramer(nil, reader)
+	frame, err := framer.ReadFrame()
+	if err != nil {
+		t.Fatalf("read upstream settings: %v", err)
+	}
+	if _, ok := frame.(*http2.SettingsFrame); !ok {
+		t.Fatalf("frame = %T, want *http2.SettingsFrame", frame)
+	}
+	if err := <-done; err != nil {
+		t.Fatalf("mock upstream error: %v", err)
 	}
 }
 
@@ -574,12 +595,76 @@ func TestHandlerSessionDeniedByHeaders(t *testing.T) {
 	h := newTestHandler(t, cfg, &mockDocker{})
 
 	req := httptest.NewRequest("POST", "/session", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "h2c")
 	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.buildkit.secrets.v1.Secrets/GetSecret")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
 	if w.Code != http.StatusForbidden {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestHandlerSessionMethodNotAllowed(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyBuildkit = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodGet, "/session", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "h2c")
+	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.filesync.v1.FileSync/DiffCopy")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandlerSessionRequiresH2CUpgrade(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyBuildkit = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodPost, "/session", nil)
+	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.filesync.v1.FileSync/DiffCopy")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestHandlerBuildKitControlMethodNotAllowed(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyBuildkit = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodGet, "/grpc", nil)
+	req.Header.Set("Connection", "Upgrade")
+	req.Header.Set("Upgrade", "h2c")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusMethodNotAllowed {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusMethodNotAllowed)
+	}
+}
+
+func TestHandlerBuildKitControlRequiresH2CUpgrade(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyBuildkit = false
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodPost, "/grpc", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusBadRequest)
 	}
 }
 
@@ -669,6 +754,101 @@ func mustMarshalProto(t *testing.T, msg proto.Message) []byte {
 		t.Fatalf("marshal proto: %v", err)
 	}
 	return payload
+}
+
+func startBuildKitSessionUpstream(t *testing.T, cfg *config.Config) <-chan error {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	cfg.Upstream.Network = "tcp"
+	cfg.Upstream.Address = ln.Addr().String()
+	t.Cleanup(func() { ln.Close() })
+
+	done := make(chan error, 1)
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			done <- err
+			return
+		}
+		defer conn.Close()
+		defer close(done)
+		if err := conn.SetDeadline(time.Now().Add(2 * time.Second)); err != nil {
+			done <- err
+			return
+		}
+
+		reader := bufio.NewReader(conn)
+		req, err := http.ReadRequest(reader)
+		if err != nil {
+			done <- fmt.Errorf("read request: %w", err)
+			return
+		}
+		if req.Method != http.MethodPost {
+			done <- fmt.Errorf("method = %s, want POST", req.Method)
+			return
+		}
+		if req.URL.Path != "/session" {
+			done <- fmt.Errorf("path = %s, want /session", req.URL.Path)
+			return
+		}
+		if req.Header.Get("Upgrade") != "h2c" {
+			done <- fmt.Errorf("upgrade = %q, want h2c", req.Header.Get("Upgrade"))
+			return
+		}
+		if _, err := conn.Write([]byte("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n\r\n")); err != nil {
+			done <- fmt.Errorf("write upgrade response: %w", err)
+			return
+		}
+		preface := make([]byte, len(http2.ClientPreface))
+		if _, err := io.ReadFull(reader, preface); err != nil {
+			done <- fmt.Errorf("read client preface: %w", err)
+			return
+		}
+		if string(preface) != http2.ClientPreface {
+			done <- fmt.Errorf("preface mismatch: %q", string(preface))
+			return
+		}
+		framer := http2.NewFramer(conn, nil)
+		if err := framer.WriteSettings(); err != nil {
+			done <- fmt.Errorf("write settings: %w", err)
+			return
+		}
+		done <- nil
+	}()
+
+	return done
+}
+
+func openBuildKitUpgradeConn(t *testing.T, server *httptest.Server, path string, headers http.Header) (net.Conn, *bufio.Reader, *http.Response) {
+	t.Helper()
+
+	conn, err := net.Dial("tcp", server.Listener.Addr().String())
+	if err != nil {
+		t.Fatalf("dial server: %v", err)
+	}
+	reader := bufio.NewReader(conn)
+	if _, err := fmt.Fprintf(conn, "POST %s HTTP/1.1\r\nHost: %s\r\nConnection: Upgrade\r\nUpgrade: h2c\r\n", path, server.Listener.Addr().String()); err != nil {
+		t.Fatalf("write request line: %v", err)
+	}
+	for key, values := range headers {
+		for _, value := range values {
+			if _, err := fmt.Fprintf(conn, "%s: %s\r\n", key, value); err != nil {
+				t.Fatalf("write header %s: %v", key, err)
+			}
+		}
+	}
+	if _, err := fmt.Fprint(conn, "\r\n"); err != nil {
+		t.Fatalf("finish request: %v", err)
+	}
+	resp, err := http.ReadResponse(reader, &http.Request{Method: http.MethodPost})
+	if err != nil {
+		t.Fatalf("read upgrade response: %v", err)
+	}
+	return conn, reader, resp
 }
 
 func TestHandlerPullDenyPolicy(t *testing.T) {

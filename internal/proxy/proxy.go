@@ -299,6 +299,14 @@ func (h *Handler) handleBuildKitSession(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
 		return
 	}
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isH2CUpgradeRequest(r) {
+		http.Error(w, "buildkit session requires h2c upgrade", http.StatusBadRequest)
+		return
+	}
 
 	result := audit.AuditBuildKitSessionHeaders(r.Header, h.cfg)
 	if result.Denied {
@@ -322,7 +330,11 @@ func (h *Handler) handleBuildKitControl(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
 		return
 	}
-	if !isUpgradeRequest(r) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	if !isH2CUpgradeRequest(r) {
 		http.Error(w, "buildkit control requires h2c upgrade", http.StatusBadRequest)
 		return
 	}
