@@ -66,7 +66,7 @@ audit:
     # Security enforcement (always active when builds are allowed):
     #   - Dangerous entitlements (network.host, security.insecure) are stripped
     #   - networkmode=host is denied
-    #   - /session endpoint is denied (blocks secrets and SSH agent forwarding)
+    #   - BuildKit remains denied by default; if enabled, /session and /grpc use separate audit policy
   pull:
     # "allow" (default): allow all image pulls
     # "deny": block all image pulls

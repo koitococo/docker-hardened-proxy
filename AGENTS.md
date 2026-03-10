@@ -351,6 +351,8 @@ No local CI required - tests run via `just`.
 
 **Namespace Isolation:** Containers are labeled with `ltkk.run/namespace`. All operations check labels against configured namespace.
 
+**BuildKit Auditing:** BuildKit is denied by default via `audit.deny_buildkit`. Fine-grained policy lives in `internal/config/config.go` and `config.example.yaml`; session method checks live in `internal/audit/buildkit.go`; per-request `/grpc` control auditing lives in `internal/proxy/buildkit_hijack.go`; route dispatch is split in `internal/route/router.go` and `internal/proxy/proxy.go`.
+
 **Request Flow:**
 1. `server` accepts connection
 2. `proxy.Handler.ServeHTTP` receives request

@@ -90,5 +90,5 @@ just run       # Run with default config
 - Bind mounts: denied unless explicitly allowed
 - Privileged containers: denied
 - Dangerous capabilities (SYS_ADMIN, etc.): denied
-- BuildKit: denied (bypasses audits)
+- BuildKit: denied by default; when enabled, `/session` is header-audited and `/grpc` control RPCs are audited per request
 - Unknown endpoints: denied (fail-closed)
