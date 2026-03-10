@@ -1,11 +1,19 @@
 package proxy
 
 import (
+	"bufio"
 	"bytes"
+	"crypto/tls"
 	"encoding/binary"
 	"fmt"
 	"io"
+	"net"
+	"net/http"
 
+	control "github.com/moby/buildkit/api/services/control"
+	"google.golang.org/protobuf/proto"
+
+	"github.com/koitococo/docker-hardened-proxy/internal/audit"
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 
 	"golang.org/x/net/http2"
@@ -29,6 +37,137 @@ type buildKitControlInspection struct {
 	MethodPath    string
 	GRPCMessage   []byte
 	BufferedBytes []byte
+}
+
+func auditBuildKitControlRequest(r io.Reader, cfg *config.Config) (*audit.BuildKitAuditResult, error) {
+	_, result, err := inspectAndAuditBuildKitControlRequest(r, cfg)
+	return result, err
+}
+
+func inspectAndAuditBuildKitControlRequest(r io.Reader, cfg *config.Config) (*buildKitControlInspection, *audit.BuildKitAuditResult, error) {
+	inspection, err := inspectBuildKitControlStream(r, buildKitControlMaxMessageSize)
+	if err != nil {
+		return nil, nil, err
+	}
+	if reason := denyBuildKitControlMethod(inspection.MethodPath, cfg); reason != "" {
+		return inspection, &audit.BuildKitAuditResult{Denied: true, Reason: reason}, nil
+	}
+	if inspection.MethodPath != buildKitControlSolveMethod {
+		return inspection, &audit.BuildKitAuditResult{}, nil
+	}
+
+	var req control.SolveRequest
+	if err := proto.Unmarshal(inspection.GRPCMessage, &req); err != nil {
+		return nil, nil, fmt.Errorf("decoding buildkit solve request: %w", err)
+	}
+	result, err := audit.AuditBuildKitSolve(&req, cfg)
+	if err != nil {
+		return nil, nil, fmt.Errorf("auditing buildkit solve request: %w", err)
+	}
+	return inspection, result, nil
+}
+
+func (h *Handler) hijackBuildKitControl(w http.ResponseWriter, r *http.Request) {
+	upstreamConn, err := h.dialBuildKitUpstream()
+	if err != nil {
+		h.logger.Error("failed to dial upstream for buildkit control", "error", err)
+		http.Error(w, "upstream connection failed", http.StatusBadGateway)
+		return
+	}
+	defer upstreamConn.Close()
+
+	if err := r.Write(upstreamConn); err != nil {
+		h.logger.Error("failed to write buildkit control request upstream", "error", err)
+		http.Error(w, "upstream write failed", http.StatusBadGateway)
+		return
+	}
+
+	upstreamReader := bufio.NewReader(upstreamConn)
+	resp, err := http.ReadResponse(upstreamReader, r)
+	if err != nil {
+		h.logger.Error("failed to read buildkit control upgrade response", "error", err)
+		http.Error(w, "upstream upgrade failed", http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	hijacker, ok := w.(http.Hijacker)
+	if !ok {
+		h.logger.Error("response writer does not support hijacking")
+		http.Error(w, "hijack not supported", http.StatusInternalServerError)
+		return
+	}
+	clientConn, _, err := hijacker.Hijack()
+	if err != nil {
+		h.logger.Error("failed to hijack buildkit control client connection", "error", err)
+		return
+	}
+	defer clientConn.Close()
+
+	if err := resp.Write(clientConn); err != nil {
+		h.logger.Error("failed to forward buildkit control upgrade response", "error", err)
+		return
+	}
+	if resp.StatusCode != http.StatusSwitchingProtocols {
+		return
+	}
+
+	serverDone := make(chan struct{})
+	go func() {
+		defer close(serverDone)
+		io.Copy(clientConn, io.MultiReader(upstreamReader, upstreamConn))
+		closeWrite(clientConn)
+	}()
+
+	inspection, result, err := inspectAndAuditBuildKitControlRequest(clientConn, h.cfg)
+	if err != nil {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit_control",
+			"reason", err.Error(),
+		)
+		return
+	}
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit_control",
+			"method", inspection.MethodPath,
+			"reason", result.Reason,
+		)
+		return
+	}
+
+	if _, err := upstreamConn.Write(inspection.BufferedBytes); err != nil {
+		h.logger.Error("failed to replay buildkit control preface upstream", "error", err)
+		return
+	}
+	io.Copy(upstreamConn, clientConn)
+	closeWrite(upstreamConn)
+	<-serverDone
+}
+
+func (h *Handler) dialBuildKitUpstream() (net.Conn, error) {
+	rawConn, err := net.Dial(h.cfg.Upstream.Network, h.cfg.Upstream.Address)
+	if err != nil {
+		return nil, err
+	}
+
+	if h.cfg.Upstream.TLSConfig == nil {
+		return rawConn, nil
+	}
+
+	cfg := h.cfg.Upstream.TLSConfig.Clone()
+	if cfg.ServerName == "" {
+		host, _, _ := net.SplitHostPort(h.cfg.Upstream.Address)
+		if host != "" {
+			cfg.ServerName = host
+		}
+	}
+	tlsConn := tls.Client(rawConn, cfg)
+	if err := tlsConn.Handshake(); err != nil {
+		rawConn.Close()
+		return nil, fmt.Errorf("upstream TLS handshake failed: %w", err)
+	}
+	return tlsConn, nil
 }
 
 func inspectBuildKitControlStream(r io.Reader, maxMessageSize int) (*buildKitControlInspection, error) {

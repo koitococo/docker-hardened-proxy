@@ -15,6 +15,9 @@ import (
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
+	control "github.com/moby/buildkit/api/services/control"
+	pb "github.com/moby/buildkit/solver/pb"
+	"google.golang.org/protobuf/proto"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 )
@@ -548,15 +551,124 @@ func TestHandlerSessionAllowed(t *testing.T) {
 	cfg := testCfg()
 	cfg.Audit.Build.Policy = "allow"
 	cfg.Audit.DenyBuildkit = false
+	cfg.Audit.BuildKit.Session.AllowFilesync = true
+	cfg.Audit.BuildKit.Session.AllowUpload = true
 	h := newTestHandler(t, cfg, &mockDocker{})
 
 	req := httptest.NewRequest("POST", "/session", nil)
+	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.filesync.v1.FileSync/DiffCopy")
 	w := httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 
 	if w.Code != http.StatusOK {
 		t.Errorf("status = %d, want %d", w.Code, http.StatusOK)
 	}
+}
+
+func TestHandlerSessionDeniedByHeaders(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.Build.Policy = "allow"
+	cfg.Audit.DenyBuildkit = false
+	cfg.Audit.BuildKit.Session.AllowFilesync = true
+	cfg.Audit.BuildKit.Session.AllowUpload = true
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest("POST", "/session", nil)
+	req.Header.Add("X-Docker-Expose-Session-Grpc-Method", "/moby.buildkit.secrets.v1.Secrets/GetSecret")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Errorf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+}
+
+func TestBuildKitControlRequestDeniedMethod(t *testing.T) {
+	cfg := testCfg()
+	raw := buildBuildKitControlHeadersOnly(t, buildKitControlPruneMethod)
+
+	result, err := auditBuildKitControlRequest(bytes.NewReader(raw), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected denied result")
+	}
+	if result.Reason != "buildkit control method \"/moby.buildkit.v1.Control/Prune\" is denied by policy" {
+		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestBuildKitControlRequestDeniedUnsafeSolve(t *testing.T) {
+	cfg := testCfg()
+	payload := mustMarshalProto(t, &control.SolveRequest{Entitlements: []string{"network.host"}})
+	raw := buildBuildKitControlUnaryRequest(t, buildKitControlSolveMethod, payload, 0, uint32(len(payload)), 0)
+
+	result, err := auditBuildKitControlRequest(bytes.NewReader(raw), cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("expected denied result")
+	}
+	if result.Reason != "buildkit solve entitlement \"network.host\" is denied by policy" {
+		t.Fatalf("reason = %q", result.Reason)
+	}
+}
+
+func TestBuildKitControlRequestAllowed(t *testing.T) {
+	cfg := testCfg()
+	tests := []struct {
+		name string
+		raw  []byte
+	}{
+		{
+			name: "safe solve",
+			raw: func() []byte {
+				payload := mustMarshalProto(t, &control.SolveRequest{Definition: &pb.Definition{Def: [][]byte{mustMarshalProto(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{}}})}}})
+				return buildBuildKitControlUnaryRequest(t, buildKitControlSolveMethod, payload, 0, uint32(len(payload)), 0)
+			}(),
+		},
+		{
+			name: "status",
+			raw:  buildBuildKitControlHeadersOnly(t, buildKitControlStatusMethod),
+		},
+		{
+			name: "list workers",
+			raw: func() []byte {
+				payload := mustMarshalProto(t, &control.ListWorkersRequest{})
+				return buildBuildKitControlUnaryRequest(t, buildKitControlListWorkersMethod, payload, 0, uint32(len(payload)), 0)
+			}(),
+		},
+		{
+			name: "info",
+			raw: func() []byte {
+				payload := mustMarshalProto(t, &control.InfoRequest{})
+				return buildBuildKitControlUnaryRequest(t, buildKitControlInfoMethod, payload, 0, uint32(len(payload)), 0)
+			}(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := auditBuildKitControlRequest(bytes.NewReader(tt.raw), cfg)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Denied {
+				t.Fatalf("unexpected deny: %s", result.Reason)
+			}
+		})
+	}
+}
+
+func mustMarshalProto(t *testing.T, msg proto.Message) []byte {
+	t.Helper()
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal proto: %v", err)
+	}
+	return payload
 }
 
 func TestHandlerPullDenyPolicy(t *testing.T) {

@@ -134,8 +134,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		h.handleBuild(w, r)
 		return
-	case route.BuildKit:
-		h.handleBuildKit(w, r)
+	case route.BuildKitControl:
+		h.handleBuildKitControl(w, r)
+		return
+	case route.BuildKitSession:
+		h.handleBuildKitSession(w, r)
 		return
 	case route.Auth:
 		if r.Method != http.MethodPost {
@@ -285,6 +288,46 @@ func (h *Handler) handleBuildKit(w http.ResponseWriter, r *http.Request) {
 		"path", r.URL.Path,
 	)
 	h.forward(w, r)
+}
+
+func (h *Handler) handleBuildKitSession(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Audit.DenyBuildkit {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit_session",
+			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
+		)
+		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		return
+	}
+
+	result := audit.AuditBuildKitSessionHeaders(r.Header, h.cfg)
+	if result.Denied {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit_session",
+			"reason", result.Reason,
+		)
+		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		return
+	}
+
+	h.forward(w, r)
+}
+
+func (h *Handler) handleBuildKitControl(w http.ResponseWriter, r *http.Request) {
+	if h.cfg.Audit.DenyBuildkit {
+		h.logger.Warn("denied",
+			"endpoint", "buildkit_control",
+			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
+		)
+		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		return
+	}
+	if !isUpgradeRequest(r) {
+		http.Error(w, "buildkit control requires h2c upgrade", http.StatusBadRequest)
+		return
+	}
+
+	h.hijackBuildKitControl(w, r)
 }
 
 func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
