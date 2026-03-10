@@ -4,6 +4,10 @@ import (
 	"net/http"
 	"testing"
 
+	control "github.com/moby/buildkit/api/services/control"
+	pb "github.com/moby/buildkit/solver/pb"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 )
 
@@ -94,5 +98,112 @@ func TestAuditBuildKitSessionHeaders(t *testing.T) {
 				t.Fatalf("Reason = %q, want %q", result.Reason, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestAuditBuildKitSolve(t *testing.T) {
+	tests := []struct {
+		name       string
+		request    *control.SolveRequest
+		wantDenied bool
+		wantReason string
+	}{
+		{
+			name: "deny network host entitlement",
+			request: &control.SolveRequest{
+				Entitlements: []string{"network.host"},
+			},
+			wantDenied: true,
+			wantReason: "buildkit solve entitlement \"network.host\" is denied by policy",
+		},
+		{
+			name: "deny security insecure entitlement",
+			request: &control.SolveRequest{
+				Entitlements: []string{"security.insecure"},
+			},
+			wantDenied: true,
+			wantReason: "buildkit solve entitlement \"security.insecure\" is denied by policy",
+		},
+		{
+			name: "deny device entitlement",
+			request: &control.SolveRequest{
+				Entitlements: []string{"device"},
+			},
+			wantDenied: true,
+			wantReason: "buildkit solve entitlement \"device\" is denied by policy",
+		},
+		{
+			name:       "deny host network exec op",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{Network: pb.NetMode_HOST}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op uses host network mode",
+		},
+		{
+			name:       "deny insecure exec op",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{Security: pb.SecurityMode_INSECURE}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op uses insecure security mode",
+		},
+		{
+			name:       "deny secret mount",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{Mounts: []*pb.Mount{{MountType: pb.MountType_SECRET}}}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op uses secret mount",
+		},
+		{
+			name:       "deny ssh mount",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{Mounts: []*pb.Mount{{MountType: pb.MountType_SSH}}}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op uses SSH mount",
+		},
+		{
+			name:       "deny secret env",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{Secretenv: []*pb.SecretEnv{{ID: "my-secret"}}}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op exposes secret environment variables",
+		},
+		{
+			name:       "deny cdi devices",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{CdiDevices: []*pb.CDIDevice{{Name: "vendor.com/gpu=device0"}}}}}),
+			wantDenied: true,
+			wantReason: "buildkit exec op requests CDI devices",
+		},
+		{
+			name:       "allow safe solve request",
+			request:    buildSolveRequest(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{}}}),
+			wantDenied: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := AuditBuildKitSolve(tt.request, testBuildKitAuditConfig())
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if result.Denied != tt.wantDenied {
+				t.Fatalf("Denied = %v, want %v", result.Denied, tt.wantDenied)
+			}
+			if result.Reason != tt.wantReason {
+				t.Fatalf("Reason = %q, want %q", result.Reason, tt.wantReason)
+			}
+		})
+	}
+}
+
+func buildSolveRequest(t *testing.T, ops ...*pb.Op) *control.SolveRequest {
+	t.Helper()
+
+	def := make([][]byte, 0, len(ops))
+	for _, op := range ops {
+		payload, err := proto.Marshal(op)
+		if err != nil {
+			t.Fatalf("marshal op: %v", err)
+		}
+		def = append(def, payload)
+	}
+
+	return &control.SolveRequest{
+		Definition: &pb.Definition{Def: def},
 	}
 }

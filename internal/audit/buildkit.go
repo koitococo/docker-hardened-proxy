@@ -5,6 +5,10 @@ import (
 	"net/http"
 	"strings"
 
+	control "github.com/moby/buildkit/api/services/control"
+	pb "github.com/moby/buildkit/solver/pb"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 )
 
@@ -32,6 +36,12 @@ var buildKitSessionMethods = map[string]buildKitSessionPolicy{
 	"moby.filesync.v1.Auth/FetchToken":           buildKitSessionPolicyAuth,
 	"moby.filesync.v1.Auth/GetTokenAuthority":    buildKitSessionPolicyAuth,
 	"moby.filesync.v1.Auth/VerifyTokenAuthority": buildKitSessionPolicyAuth,
+}
+
+var deniedBuildKitEntitlements = map[string]bool{
+	"network.host":      true,
+	"security.insecure": true,
+	"device":            true,
 }
 
 // BuildKitAuditResult holds the result of auditing a BuildKit request.
@@ -66,6 +76,35 @@ func AuditBuildKitSessionHeaders(headers http.Header, cfg *config.Config) *Build
 	return &BuildKitAuditResult{}
 }
 
+// AuditBuildKitSolve audits a BuildKit Solve request and its embedded LLB definition.
+func AuditBuildKitSolve(req *control.SolveRequest, cfg *config.Config) (*BuildKitAuditResult, error) {
+	for _, entitlement := range req.Entitlements {
+		normalized := strings.TrimSpace(entitlement)
+		if deniedBuildKitEntitlements[normalized] {
+			return &BuildKitAuditResult{
+				Denied: true,
+				Reason: fmt.Sprintf("buildkit solve entitlement %q is denied by policy", normalized),
+			}, nil
+		}
+	}
+
+	if req.Definition == nil {
+		return &BuildKitAuditResult{}, nil
+	}
+
+	for i, rawOp := range req.Definition.Def {
+		op, err := decodeBuildKitOp(rawOp)
+		if err != nil {
+			return nil, fmt.Errorf("decoding buildkit op %d: %w", i, err)
+		}
+		if reason := denyBuildKitOp(op); reason != "" {
+			return &BuildKitAuditResult{Denied: true, Reason: reason}, nil
+		}
+	}
+
+	return &BuildKitAuditResult{}, nil
+}
+
 func normalizeBuildKitSessionMethod(method string) string {
 	return strings.TrimPrefix(strings.TrimSpace(method), "/")
 }
@@ -96,4 +135,40 @@ func isBuildKitSessionMethodAllowed(policy buildKitSessionPolicy, sessionCfg con
 	default:
 		return false
 	}
+}
+
+func decodeBuildKitOp(rawOp []byte) (*pb.Op, error) {
+	var op pb.Op
+	if err := proto.Unmarshal(rawOp, &op); err != nil {
+		return nil, fmt.Errorf("unmarshal buildkit op: %w", err)
+	}
+	return &op, nil
+}
+
+func denyBuildKitOp(op *pb.Op) string {
+	execOp := op.GetExec()
+	if execOp == nil {
+		return ""
+	}
+	if execOp.Network == pb.NetMode_HOST {
+		return "buildkit exec op uses host network mode"
+	}
+	if execOp.Security == pb.SecurityMode_INSECURE {
+		return "buildkit exec op uses insecure security mode"
+	}
+	if len(execOp.CdiDevices) > 0 {
+		return "buildkit exec op requests CDI devices"
+	}
+	if len(execOp.Secretenv) > 0 {
+		return "buildkit exec op exposes secret environment variables"
+	}
+	for _, mount := range execOp.Mounts {
+		switch mount.MountType {
+		case pb.MountType_SECRET:
+			return "buildkit exec op uses secret mount"
+		case pb.MountType_SSH:
+			return "buildkit exec op uses SSH mount"
+		}
+	}
+	return ""
 }
