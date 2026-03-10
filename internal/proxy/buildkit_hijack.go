@@ -29,6 +29,7 @@ const (
 	buildKitControlSessionMethod            = "/moby.buildkit.v1.Control/Session"
 	buildKitControlListWorkersMethod        = "/moby.buildkit.v1.Control/ListWorkers"
 	buildKitControlInfoMethod               = "/moby.buildkit.v1.Control/Info"
+	buildKitControlTraceExportMethod        = "/opentelemetry.proto.collector.trace.v1.TraceService/Export"
 	buildKitControlListenBuildHistoryMethod = "/moby.buildkit.v1.Control/ListenBuildHistory"
 	buildKitControlUpdateBuildHistoryMethod = "/moby.buildkit.v1.Control/UpdateBuildHistory"
 	buildKitControlMaxMessageSize           = 4 << 20
@@ -57,6 +58,29 @@ type buildKitBufferedFrame struct {
 type frameCaptureReader struct {
 	r   io.Reader
 	buf bytes.Buffer
+}
+
+type buildKitHeaderDecoder struct {
+	methodPath string
+	decoder    *hpack.Decoder
+}
+
+func newBuildKitHeaderDecoder() *buildKitHeaderDecoder {
+	result := &buildKitHeaderDecoder{}
+	result.decoder = hpack.NewDecoder(4096, func(field hpack.HeaderField) {
+		if field.Name == ":path" {
+			result.methodPath = field.Value
+		}
+	})
+	return result
+}
+
+func (d *buildKitHeaderDecoder) DecodePath(fragments []byte) (string, error) {
+	d.methodPath = ""
+	if _, err := d.decoder.Write(fragments); err != nil {
+		return "", err
+	}
+	return d.methodPath, nil
 }
 
 func (r *frameCaptureReader) Read(p []byte) (int, error) {
@@ -94,6 +118,7 @@ func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *confi
 
 	capture := &frameCaptureReader{r: client}
 	framer := http2.NewFramer(io.Discard, capture)
+	headerDecoder := newBuildKitHeaderDecoder()
 	streams := make(map[uint32]*buildKitControlStreamState)
 
 	for {
@@ -127,7 +152,7 @@ func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *confi
 			}
 			delete(streams, streamID)
 		case *http2.HeadersFrame:
-			path, completeRaw, err := readBuildKitControlHeaders(framer, capture, typed, rawFrame)
+			path, completeRaw, err := readBuildKitControlHeaders(framer, capture, typed, rawFrame, headerDecoder)
 			if err != nil {
 				return err
 			}
@@ -374,7 +399,7 @@ func readUnaryGRPCMessage(framer *http2.Framer, streamID uint32, maxMessageSize 
 
 func denyBuildKitControlMethod(methodPath string, cfg *config.Config) string {
 	switch methodPath {
-	case buildKitControlSolveMethod, buildKitControlStatusMethod, buildKitControlListWorkersMethod, buildKitControlInfoMethod:
+	case buildKitControlSolveMethod, buildKitControlStatusMethod, buildKitControlListWorkersMethod, buildKitControlInfoMethod, buildKitControlTraceExportMethod:
 		return ""
 	case buildKitControlDiskUsageMethod:
 		if cfg.Audit.BuildKit.AllowDiskUsage {
@@ -578,7 +603,7 @@ func writeRawBuildKitFrame(upstream io.Writer, raw []byte) error {
 	return nil
 }
 
-func readBuildKitControlHeaders(framer *http2.Framer, capture *frameCaptureReader, headers *http2.HeadersFrame, initialRaw []byte) (string, []byte, error) {
+func readBuildKitControlHeaders(framer *http2.Framer, capture *frameCaptureReader, headers *http2.HeadersFrame, initialRaw []byte, decoder *buildKitHeaderDecoder) (string, []byte, error) {
 	fragments := append([]byte{}, headers.HeaderBlockFragment()...)
 	completeRaw := append([]byte{}, initialRaw...)
 	streamID := headers.Header().StreamID
@@ -602,7 +627,7 @@ func readBuildKitControlHeaders(framer *http2.Framer, capture *frameCaptureReade
 		}
 	}
 
-	path, err := decodeBuildKitHeaderPath(fragments)
+	path, err := decoder.DecodePath(fragments)
 	if err != nil {
 		return "", nil, fmt.Errorf("decoding HTTP/2 header block: %w", err)
 	}

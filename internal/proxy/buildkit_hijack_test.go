@@ -125,6 +125,18 @@ func TestBuildKitControlInspectorRejectsTruncatedMessage(t *testing.T) {
 	}
 }
 
+func TestBuildKitControlTelemetryExportAllowed(t *testing.T) {
+	raw := buildBuildKitControlHeadersOnly(t, "/opentelemetry.proto.collector.trace.v1.TraceService/Export")
+
+	result, err := auditBuildKitControlRequest(bytes.NewReader(raw), testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatalf("Denied = true, want false (reason=%q)", result.Reason)
+	}
+}
+
 func TestProxyBuildKitControlFramesAllowsMultipleRequests(t *testing.T) {
 	cfg := testCfg()
 	solvePayload := mustMarshalBuildKitProto(t, &control.SolveRequest{
@@ -142,6 +154,22 @@ func TestProxyBuildKitControlFramesAllowsMultipleRequests(t *testing.T) {
 	}
 	if !bytes.Equal(forwarded.Bytes(), raw) {
 		t.Fatal("expected all allowed requests to be forwarded unchanged")
+	}
+}
+
+func TestBuildKitControlHPACKDynamicTableAcrossRequests(t *testing.T) {
+	cfg := testCfg()
+	raw := buildBuildKitControlConnectionStatefulHPACK(t,
+		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlStatusMethod},
+		buildKitControlRequestSpec{StreamID: 3, MethodPath: buildKitControlStatusMethod},
+	)
+
+	var forwarded bytes.Buffer
+	if err := proxyBuildKitControlFrames(bytes.NewReader(raw), &forwarded, cfg); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(forwarded.Bytes(), raw) {
+		t.Fatal("expected HPACK-reused requests to be forwarded unchanged")
 	}
 }
 
@@ -330,6 +358,46 @@ func buildBuildKitControlConnection(t *testing.T, specs ...buildKitControlReques
 
 		if err := framer.WriteData(spec.StreamID, true, envelope); err != nil {
 			t.Fatalf("write data frame: %v", err)
+		}
+	}
+
+	return raw.Bytes()
+}
+
+func buildBuildKitControlConnectionStatefulHPACK(t *testing.T, specs ...buildKitControlRequestSpec) []byte {
+	t.Helper()
+
+	var raw bytes.Buffer
+	raw.WriteString(http2.ClientPreface)
+
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	var headerBuf bytes.Buffer
+	encoder := hpack.NewEncoder(&headerBuf)
+	for _, spec := range specs {
+		headerBuf.Reset()
+		for _, field := range []hpack.HeaderField{
+			{Name: ":method", Value: "POST"},
+			{Name: ":scheme", Value: "http"},
+			{Name: ":authority", Value: "docker"},
+			{Name: ":path", Value: spec.MethodPath},
+			{Name: "content-type", Value: "application/grpc"},
+			{Name: "te", Value: "trailers"},
+		} {
+			if err := encoder.WriteField(field); err != nil {
+				t.Fatalf("encode header %q: %v", field.Name, err)
+			}
+		}
+		if err := framer.WriteHeaders(http2.HeadersFrameParam{
+			StreamID:      spec.StreamID,
+			BlockFragment: bytes.Clone(headerBuf.Bytes()),
+			EndHeaders:    true,
+			EndStream:     true,
+		}); err != nil {
+			t.Fatalf("write headers: %v", err)
 		}
 	}
 
