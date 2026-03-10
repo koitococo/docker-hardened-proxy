@@ -109,6 +109,102 @@ upstream:
 	if cfg.Logging.Format != "json" {
 		t.Errorf("format = %q, want %q", cfg.Logging.Format, "json")
 	}
+	if !cfg.Audit.DenyBuildkit {
+		t.Error("deny_buildkit should default to true")
+	}
+}
+
+func TestParseBuildKitDefaults(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  deny_buildkit: false
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.Audit.DenyBuildkit {
+		t.Fatal("deny_buildkit = true, want false")
+	}
+	if cfg.Audit.BuildKit.AllowDiskUsage {
+		t.Error("allow_disk_usage should default to false")
+	}
+	if cfg.Audit.BuildKit.AllowPrune {
+		t.Error("allow_prune should default to false")
+	}
+	if cfg.Audit.BuildKit.AllowHistory {
+		t.Error("allow_history should default to false")
+	}
+	if !cfg.Audit.BuildKit.Session.AllowFilesync {
+		t.Error("allow_filesync should default to true when BuildKit is enabled")
+	}
+	if !cfg.Audit.BuildKit.Session.AllowUpload {
+		t.Error("allow_upload should default to true when BuildKit is enabled")
+	}
+	if cfg.Audit.BuildKit.Session.AllowSecrets {
+		t.Error("allow_secrets should default to false")
+	}
+	if cfg.Audit.BuildKit.Session.AllowSSH {
+		t.Error("allow_ssh should default to false")
+	}
+	if cfg.Audit.BuildKit.Session.AllowAuth {
+		t.Error("allow_auth should default to false")
+	}
+}
+
+func TestParseBuildKitExplicitOverrides(t *testing.T) {
+	data := []byte(`
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  deny_buildkit: false
+  buildkit:
+    allow_disk_usage: true
+    allow_prune: true
+    allow_history: true
+    session:
+      allow_filesync: false
+      allow_upload: false
+      allow_secrets: true
+      allow_ssh: true
+      allow_auth: true
+`)
+	cfg, err := Parse(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.Audit.BuildKit.AllowDiskUsage {
+		t.Error("allow_disk_usage = false, want true")
+	}
+	if !cfg.Audit.BuildKit.AllowPrune {
+		t.Error("allow_prune = false, want true")
+	}
+	if !cfg.Audit.BuildKit.AllowHistory {
+		t.Error("allow_history = false, want true")
+	}
+	if cfg.Audit.BuildKit.Session.AllowFilesync {
+		t.Error("allow_filesync = true, want false")
+	}
+	if cfg.Audit.BuildKit.Session.AllowUpload {
+		t.Error("allow_upload = true, want false")
+	}
+	if !cfg.Audit.BuildKit.Session.AllowSecrets {
+		t.Error("allow_secrets = false, want true")
+	}
+	if !cfg.Audit.BuildKit.Session.AllowSSH {
+		t.Error("allow_ssh = false, want true")
+	}
+	if !cfg.Audit.BuildKit.Session.AllowAuth {
+		t.Error("allow_auth = false, want true")
+	}
 }
 
 func TestParseNoListener(t *testing.T) {

@@ -91,10 +91,24 @@ audit:
     #   - "registry.example.com/myapp/"
     #   - "myregistry.com/"
 
-  # BuildKit gRPC endpoint (/grpc) used by "docker buildx".
-  # WARNING: Enabling BuildKit bypasses container creation audits (privileged, caps, bind mounts).
-  # Default: true (deny BuildKit)
+  # Top-level BuildKit kill switch.
+  # Default: true (deny all BuildKit control and session traffic)
   deny_buildkit: true
+
+  # Fine-grained BuildKit policy. These defaults apply when deny_buildkit is false.
+  buildkit:
+    # Allow read-only worker info by default, but keep higher-risk control methods denied.
+    allow_disk_usage: false
+    allow_prune: false
+    allow_history: false
+    session:
+      # Buildx file transfer paths are allowed by default.
+      allow_filesync: true
+      allow_upload: true
+      # High-risk session services stay denied unless explicitly enabled.
+      allow_secrets: false
+      allow_ssh: false
+      allow_auth: false
 
 logging:
   level: "info"

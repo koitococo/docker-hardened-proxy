@@ -120,6 +120,7 @@ type AuditConfig struct {
 	Build                   BuildConfig      `yaml:"build"`
 	Pull                    PullConfig       `yaml:"pull"`
 	Registry                RegistryConfig   `yaml:"registry"`
+	BuildKit                BuildKitConfig   `yaml:"buildkit"`
 	DenyBuildkit            bool             `yaml:"deny_buildkit"`
 }
 
@@ -146,6 +147,23 @@ type RegistryConfig struct {
 	Push string `yaml:"push"`
 	// PushAllowed is used when Push is "list": image name prefixes allowed for push.
 	PushAllowed []string `yaml:"push_allowed,omitempty"`
+}
+
+// BuildKitConfig controls fine-grained BuildKit control and session auditing.
+type BuildKitConfig struct {
+	AllowDiskUsage bool                  `yaml:"allow_disk_usage"`
+	AllowPrune     bool                  `yaml:"allow_prune"`
+	AllowHistory   bool                  `yaml:"allow_history"`
+	Session        BuildKitSessionConfig `yaml:"session"`
+}
+
+// BuildKitSessionConfig controls allowed BuildKit session services.
+type BuildKitSessionConfig struct {
+	AllowFilesync bool `yaml:"allow_filesync"`
+	AllowUpload   bool `yaml:"allow_upload"`
+	AllowSecrets  bool `yaml:"allow_secrets"`
+	AllowSSH      bool `yaml:"allow_ssh"`
+	AllowAuth     bool `yaml:"allow_auth"`
 }
 
 type SysctlsConfig struct {
@@ -191,7 +209,7 @@ func Load(path string) (*Config, error) {
 }
 
 func Parse(data []byte) (*Config, error) {
-	var cfg Config
+	cfg := defaultConfig()
 	if err := yaml.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parsing config: %w", err)
 	}
@@ -199,6 +217,20 @@ func Parse(data []byte) (*Config, error) {
 		return nil, fmt.Errorf("validating config: %w", err)
 	}
 	return &cfg, nil
+}
+
+func defaultConfig() Config {
+	return Config{
+		Audit: AuditConfig{
+			DenyBuildkit: true,
+			BuildKit: BuildKitConfig{
+				Session: BuildKitSessionConfig{
+					AllowFilesync: true,
+					AllowUpload:   true,
+				},
+			},
+		},
+	}
 }
 
 func (c *Config) validate() error {
