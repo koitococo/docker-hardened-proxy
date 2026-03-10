@@ -10,9 +10,9 @@ import (
 
 // BuildAuditResult holds the result of auditing a build request.
 type BuildAuditResult struct {
-	Denied  bool
-	Reason  string
-	Query   url.Values // rewritten query values (nil if denied)
+	Denied bool
+	Reason string
+	Query  url.Values // rewritten query values (nil if denied)
 }
 
 // AuditBuild audits a Docker build request's query parameters against the config policy.
@@ -59,7 +59,7 @@ func AuditBuild(query url.Values, cfg *config.Config) *BuildAuditResult {
 
 // dangerousEntitlements are BuildKit entitlements that must be stripped.
 var dangerousEntitlements = map[string]bool{
-	"network.host":     true,
+	"network.host":      true,
 	"security.insecure": true,
 }
 
