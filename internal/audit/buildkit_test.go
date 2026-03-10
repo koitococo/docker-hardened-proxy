@@ -41,6 +41,16 @@ func TestAuditBuildKitSessionHeaders(t *testing.T) {
 			},
 		},
 		{
+			name: "allow health methods",
+			headers: http.Header{
+				"X-Docker-Expose-Session-Grpc-Method": []string{
+					"/grpc.health.v1.Health/Check",
+					"/grpc.health.v1.Health/Watch",
+					"/grpc.health.v1.Health/List",
+				},
+			},
+		},
+		{
 			name: "deny secrets method",
 			headers: http.Header{
 				"X-Docker-Expose-Session-Grpc-Method": []string{

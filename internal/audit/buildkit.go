@@ -19,6 +19,7 @@ type buildKitSessionPolicy string
 const (
 	buildKitSessionPolicyFilesync buildKitSessionPolicy = "filesync"
 	buildKitSessionPolicyUpload   buildKitSessionPolicy = "upload"
+	buildKitSessionPolicyHealth   buildKitSessionPolicy = "health"
 	buildKitSessionPolicySecrets  buildKitSessionPolicy = "secrets"
 	buildKitSessionPolicySSH      buildKitSessionPolicy = "ssh"
 	buildKitSessionPolicyAuth     buildKitSessionPolicy = "auth"
@@ -29,6 +30,9 @@ var buildKitSessionMethods = map[string]buildKitSessionPolicy{
 	"moby.filesync.v1.FileSync/TarStream":        buildKitSessionPolicyFilesync,
 	"moby.filesync.v1.FileSend/DiffCopy":         buildKitSessionPolicyFilesync,
 	"moby.upload.v1.Upload/Pull":                 buildKitSessionPolicyUpload,
+	"grpc.health.v1.Health/Check":                buildKitSessionPolicyHealth,
+	"grpc.health.v1.Health/Watch":                buildKitSessionPolicyHealth,
+	"grpc.health.v1.Health/List":                 buildKitSessionPolicyHealth,
 	"moby.buildkit.secrets.v1.Secrets/GetSecret": buildKitSessionPolicySecrets,
 	"moby.sshforward.v1.SSH/CheckAgent":          buildKitSessionPolicySSH,
 	"moby.sshforward.v1.SSH/ForwardAgent":        buildKitSessionPolicySSH,
@@ -126,6 +130,8 @@ func isBuildKitSessionMethodAllowed(policy buildKitSessionPolicy, sessionCfg con
 		return sessionCfg.AllowFilesync
 	case buildKitSessionPolicyUpload:
 		return sessionCfg.AllowUpload
+	case buildKitSessionPolicyHealth:
+		return true
 	case buildKitSessionPolicySecrets:
 		return sessionCfg.AllowSecrets
 	case buildKitSessionPolicySSH:
