@@ -6,6 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	control "github.com/moby/buildkit/api/services/control"
+	pb "github.com/moby/buildkit/solver/pb"
+	"google.golang.org/protobuf/proto"
+
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
 
 	"golang.org/x/net/http2"
@@ -117,6 +121,53 @@ func TestBuildKitControlInspectorRejectsTruncatedMessage(t *testing.T) {
 	}
 }
 
+func TestProxyBuildKitControlFramesAllowsMultipleRequests(t *testing.T) {
+	cfg := testCfg()
+	solvePayload := mustMarshalBuildKitProto(t, &control.SolveRequest{
+		Definition: &pb.Definition{Def: [][]byte{mustMarshalBuildKitProto(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{}}})}},
+	})
+	raw := buildBuildKitControlConnection(t,
+		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: solvePayload},
+		buildKitControlRequestSpec{StreamID: 3, MethodPath: buildKitControlStatusMethod},
+	)
+
+	var forwarded bytes.Buffer
+	err := proxyBuildKitControlFrames(bytes.NewReader(raw), &forwarded, cfg)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(forwarded.Bytes(), raw) {
+		t.Fatal("expected all allowed requests to be forwarded unchanged")
+	}
+}
+
+func TestProxyBuildKitControlFramesClosesConnectionOnLaterDeniedSolve(t *testing.T) {
+	cfg := testCfg()
+	safePayload := mustMarshalBuildKitProto(t, &control.SolveRequest{
+		Definition: &pb.Definition{Def: [][]byte{mustMarshalBuildKitProto(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{}}})}},
+	})
+	unsafePayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Entitlements: []string{"network.host"}})
+	raw := buildBuildKitControlConnection(t,
+		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: safePayload},
+		buildKitControlRequestSpec{StreamID: 3, MethodPath: buildKitControlSolveMethod, Payload: unsafePayload},
+	)
+	wantForwarded := buildBuildKitControlConnection(t,
+		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: safePayload},
+	)
+
+	var forwarded bytes.Buffer
+	err := proxyBuildKitControlFrames(bytes.NewReader(raw), &forwarded, cfg)
+	if err == nil {
+		t.Fatal("expected deny error")
+	}
+	if !strings.Contains(err.Error(), "network.host") {
+		t.Fatalf("error = %q, want solve deny reason", err)
+	}
+	if !bytes.Equal(forwarded.Bytes(), wantForwarded) {
+		t.Fatal("expected only frames before denied request to be forwarded")
+	}
+}
+
 func buildBuildKitControlHeadersOnly(t *testing.T, methodPath string) []byte {
 	t.Helper()
 
@@ -185,4 +236,73 @@ func encodeBuildKitControlHeaders(t *testing.T, methodPath string) []byte {
 		}
 	}
 	return block.Bytes()
+}
+
+type buildKitControlRequestSpec struct {
+	StreamID       uint32
+	MethodPath     string
+	Payload        []byte
+	CompressedFlag byte
+	DeclaredLen    uint32
+	SplitAt        int
+}
+
+func buildBuildKitControlConnection(t *testing.T, specs ...buildKitControlRequestSpec) []byte {
+	t.Helper()
+
+	var raw bytes.Buffer
+	raw.WriteString(http2.ClientPreface)
+
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+
+	for _, spec := range specs {
+		if err := framer.WriteHeaders(http2.HeadersFrameParam{
+			StreamID:      spec.StreamID,
+			BlockFragment: encodeBuildKitControlHeaders(t, spec.MethodPath),
+			EndHeaders:    true,
+			EndStream:     len(spec.Payload) == 0,
+		}); err != nil {
+			t.Fatalf("write headers: %v", err)
+		}
+		if len(spec.Payload) == 0 {
+			continue
+		}
+
+		declaredLen := spec.DeclaredLen
+		if declaredLen == 0 {
+			declaredLen = uint32(len(spec.Payload))
+		}
+		envelope := make([]byte, 5+len(spec.Payload))
+		envelope[0] = spec.CompressedFlag
+		binary.BigEndian.PutUint32(envelope[1:5], declaredLen)
+		copy(envelope[5:], spec.Payload)
+
+		if spec.SplitAt > 0 && spec.SplitAt < len(envelope) {
+			if err := framer.WriteData(spec.StreamID, false, envelope[:spec.SplitAt]); err != nil {
+				t.Fatalf("write first data frame: %v", err)
+			}
+			if err := framer.WriteData(spec.StreamID, true, envelope[spec.SplitAt:]); err != nil {
+				t.Fatalf("write second data frame: %v", err)
+			}
+			continue
+		}
+
+		if err := framer.WriteData(spec.StreamID, true, envelope); err != nil {
+			t.Fatalf("write data frame: %v", err)
+		}
+	}
+
+	return raw.Bytes()
+}
+
+func mustMarshalBuildKitProto(t *testing.T, msg proto.Message) []byte {
+	t.Helper()
+	payload, err := proto.Marshal(msg)
+	if err != nil {
+		t.Fatalf("marshal proto: %v", err)
+	}
+	return payload
 }

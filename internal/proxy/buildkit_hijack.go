@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"crypto/tls"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -39,9 +40,104 @@ type buildKitControlInspection struct {
 	BufferedBytes []byte
 }
 
+type buildKitControlStreamState struct {
+	MethodPath    string
+	Allowed       bool
+	BufferedBytes bytes.Buffer
+	GRPCData      bytes.Buffer
+	MessageLength int
+}
+
+type frameCaptureReader struct {
+	r   io.Reader
+	buf bytes.Buffer
+}
+
+func (r *frameCaptureReader) Read(p []byte) (int, error) {
+	n, err := r.r.Read(p)
+	if n > 0 {
+		if _, writeErr := r.buf.Write(p[:n]); writeErr != nil {
+			return n, writeErr
+		}
+	}
+	return n, err
+}
+
+func (r *frameCaptureReader) Take() []byte {
+	data := bytes.Clone(r.buf.Bytes())
+	r.buf.Reset()
+	return data
+}
+
 func auditBuildKitControlRequest(r io.Reader, cfg *config.Config) (*audit.BuildKitAuditResult, error) {
 	_, result, err := inspectAndAuditBuildKitControlRequest(r, cfg)
 	return result, err
+}
+
+func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *config.Config) error {
+	preface := make([]byte, len(http2.ClientPreface))
+	if _, err := io.ReadFull(client, preface); err != nil {
+		return fmt.Errorf("reading HTTP/2 client preface: %w", err)
+	}
+	if string(preface) != http2.ClientPreface {
+		return fmt.Errorf("invalid HTTP/2 client preface")
+	}
+	if _, err := upstream.Write(preface); err != nil {
+		return fmt.Errorf("forwarding HTTP/2 client preface: %w", err)
+	}
+
+	capture := &frameCaptureReader{r: client}
+	framer := http2.NewFramer(io.Discard, capture)
+	streams := make(map[uint32]*buildKitControlStreamState)
+
+	for {
+		frame, err := framer.ReadFrame()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("reading buildkit control frame: %w", err)
+		}
+		rawFrame := capture.Take()
+
+		switch typed := frame.(type) {
+		case *http2.SettingsFrame, *http2.PingFrame:
+			if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+				return err
+			}
+		case *http2.WindowUpdateFrame, *http2.PriorityFrame:
+			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame); err != nil {
+				return err
+			}
+		case *http2.RSTStreamFrame:
+			streamID := typed.Header().StreamID
+			state, ok := streams[streamID]
+			if ok && !state.Allowed {
+				delete(streams, streamID)
+				continue
+			}
+			if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+				return err
+			}
+			delete(streams, streamID)
+		case *http2.HeadersFrame:
+			path, completeRaw, err := readBuildKitControlHeaders(framer, capture, typed, rawFrame)
+			if err != nil {
+				return err
+			}
+			if err := processBuildKitHeadersFrame(upstream, streams, typed, path, completeRaw, cfg); err != nil {
+				return err
+			}
+		case *http2.DataFrame:
+			if err := processBuildKitDataFrame(upstream, streams, typed, rawFrame, cfg); err != nil {
+				return err
+			}
+		default:
+			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame); err != nil {
+				return err
+			}
+		}
+	}
 }
 
 func inspectAndAuditBuildKitControlRequest(r io.Reader, cfg *config.Config) (*buildKitControlInspection, *audit.BuildKitAuditResult, error) {
@@ -119,7 +215,7 @@ func (h *Handler) hijackBuildKitControl(w http.ResponseWriter, r *http.Request) 
 		closeWrite(clientConn)
 	}()
 
-	inspection, result, err := inspectAndAuditBuildKitControlRequest(clientConn, h.cfg)
+	err = proxyBuildKitControlFrames(clientConn, upstreamConn, h.cfg)
 	if err != nil {
 		h.logger.Warn("denied",
 			"endpoint", "buildkit_control",
@@ -127,20 +223,6 @@ func (h *Handler) hijackBuildKitControl(w http.ResponseWriter, r *http.Request) 
 		)
 		return
 	}
-	if result.Denied {
-		h.logger.Warn("denied",
-			"endpoint", "buildkit_control",
-			"method", inspection.MethodPath,
-			"reason", result.Reason,
-		)
-		return
-	}
-
-	if _, err := upstreamConn.Write(inspection.BufferedBytes); err != nil {
-		h.logger.Error("failed to replay buildkit control preface upstream", "error", err)
-		return
-	}
-	io.Copy(upstreamConn, clientConn)
 	closeWrite(upstreamConn)
 	<-serverDone
 }
@@ -231,41 +313,15 @@ func readBuildKitControlMethod(framer *http2.Framer) (uint32, string, error) {
 }
 
 func decodeBuildKitControlMethod(framer *http2.Framer, headers *http2.HeadersFrame) (string, error) {
-	fragments := append([]byte{}, headers.HeaderBlockFragment()...)
-	streamID := headers.Header().StreamID
-
-	for !headers.HeadersEnded() {
-		frame, err := framer.ReadFrame()
-		if err != nil {
-			return "", fmt.Errorf("reading HTTP/2 continuation frame: %w", err)
-		}
-		continuation, ok := frame.(*http2.ContinuationFrame)
-		if !ok {
-			return "", fmt.Errorf("expected HTTP/2 CONTINUATION frame, got %s", frame.Header().Type)
-		}
-		if continuation.Header().StreamID != streamID {
-			return "", fmt.Errorf("received CONTINUATION for unexpected stream %d", continuation.Header().StreamID)
-		}
-		fragments = append(fragments, continuation.HeaderBlockFragment()...)
-		if continuation.HeadersEnded() {
-			break
-		}
-	}
-
-	var methodPath string
-	decoder := hpack.NewDecoder(4096, func(field hpack.HeaderField) {
-		if field.Name == ":path" {
-			methodPath = field.Value
-		}
-	})
-	if _, err := decoder.Write(fragments); err != nil {
+	path, err := decodeBuildKitHeaderPath(readBuildKitHeaderFragments(framer, headers))
+	if err != nil {
 		return "", fmt.Errorf("decoding HTTP/2 header block: %w", err)
 	}
-	if methodPath == "" {
+	if path == "" {
 		return "", fmt.Errorf("missing :path in HTTP/2 control request")
 	}
 
-	return methodPath, nil
+	return path, nil
 }
 
 func readUnaryGRPCMessage(framer *http2.Framer, streamID uint32, maxMessageSize int) ([]byte, error) {
@@ -346,4 +402,202 @@ func isBuildKitUnaryMethod(methodPath string) bool {
 	default:
 		return false
 	}
+}
+
+func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, headers *http2.HeadersFrame, path string, rawFrame []byte, cfg *config.Config) error {
+	streamID := headers.Header().StreamID
+	state, ok := streams[streamID]
+	if path == "" {
+		if !ok {
+			return fmt.Errorf("missing :path in HTTP/2 control request")
+		}
+		if state.Allowed {
+			if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+				return err
+			}
+		} else {
+			state.BufferedBytes.Write(rawFrame)
+		}
+		if headers.StreamEnded() {
+			delete(streams, streamID)
+		}
+		return nil
+	}
+	if ok {
+		return fmt.Errorf("received duplicate initial headers for stream %d", streamID)
+	}
+
+	state = &buildKitControlStreamState{MethodPath: path, MessageLength: -1}
+	streams[streamID] = state
+	if reason := denyBuildKitControlMethod(path, cfg); reason != "" {
+		return errors.New(reason)
+	}
+	if !isBuildKitUnaryMethod(path) {
+		state.Allowed = true
+		if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+			return err
+		}
+		if headers.StreamEnded() {
+			delete(streams, streamID)
+		}
+		return nil
+	}
+
+	state.BufferedBytes.Write(rawFrame)
+	return nil
+}
+
+func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, frame *http2.DataFrame, rawFrame []byte, cfg *config.Config) error {
+	streamID := frame.Header().StreamID
+	state, ok := streams[streamID]
+	if !ok {
+		return fmt.Errorf("received DATA for unknown stream %d", streamID)
+	}
+	if state.Allowed {
+		if err := writeRawBuildKitFrame(upstream, rawFrame); err != nil {
+			return err
+		}
+		if frame.StreamEnded() {
+			delete(streams, streamID)
+		}
+		return nil
+	}
+
+	state.BufferedBytes.Write(rawFrame)
+	state.GRPCData.Write(frame.Data())
+	if state.MessageLength < 0 && state.GRPCData.Len() >= 5 {
+		envelope := state.GRPCData.Bytes()
+		if envelope[0] != 0 {
+			return fmt.Errorf("gRPC message compression is not supported")
+		}
+		state.MessageLength = int(binary.BigEndian.Uint32(envelope[1:5]))
+		if state.MessageLength > buildKitControlMaxMessageSize {
+			return fmt.Errorf("gRPC message length %d exceeds limit %d", state.MessageLength, buildKitControlMaxMessageSize)
+		}
+	}
+	if state.MessageLength >= 0 && state.GRPCData.Len() >= 5+state.MessageLength {
+		payload := bytes.Clone(state.GRPCData.Bytes()[5 : 5+state.MessageLength])
+		result, err := auditBuildKitControlPayload(state.MethodPath, payload, cfg)
+		if err != nil {
+			return err
+		}
+		if result.Denied {
+			return errors.New(result.Reason)
+		}
+		state.Allowed = true
+		if err := writeRawBuildKitFrame(upstream, state.BufferedBytes.Bytes()); err != nil {
+			return err
+		}
+		state.BufferedBytes.Reset()
+		if frame.StreamEnded() {
+			delete(streams, streamID)
+		}
+		return nil
+	}
+	if frame.StreamEnded() {
+		return fmt.Errorf("truncated gRPC message")
+	}
+	return nil
+}
+
+func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, streamID uint32, rawFrame []byte) error {
+	if streamID == 0 {
+		return writeRawBuildKitFrame(upstream, rawFrame)
+	}
+	state, ok := streams[streamID]
+	if !ok || state.Allowed {
+		return writeRawBuildKitFrame(upstream, rawFrame)
+	}
+	state.BufferedBytes.Write(rawFrame)
+	return nil
+}
+
+func writeRawBuildKitFrame(upstream io.Writer, raw []byte) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, err := upstream.Write(raw); err != nil {
+		return fmt.Errorf("forwarding buildkit control frame: %w", err)
+	}
+	return nil
+}
+
+func readBuildKitControlHeaders(framer *http2.Framer, capture *frameCaptureReader, headers *http2.HeadersFrame, initialRaw []byte) (string, []byte, error) {
+	fragments := append([]byte{}, headers.HeaderBlockFragment()...)
+	completeRaw := append([]byte{}, initialRaw...)
+	streamID := headers.Header().StreamID
+
+	for !headers.HeadersEnded() {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			return "", nil, fmt.Errorf("reading HTTP/2 continuation frame: %w", err)
+		}
+		continuation, ok := frame.(*http2.ContinuationFrame)
+		if !ok {
+			return "", nil, fmt.Errorf("expected HTTP/2 CONTINUATION frame, got %s", frame.Header().Type)
+		}
+		if continuation.Header().StreamID != streamID {
+			return "", nil, fmt.Errorf("received CONTINUATION for unexpected stream %d", continuation.Header().StreamID)
+		}
+		fragments = append(fragments, continuation.HeaderBlockFragment()...)
+		completeRaw = append(completeRaw, capture.Take()...)
+		if continuation.HeadersEnded() {
+			break
+		}
+	}
+
+	path, err := decodeBuildKitHeaderPath(fragments)
+	if err != nil {
+		return "", nil, fmt.Errorf("decoding HTTP/2 header block: %w", err)
+	}
+	return path, completeRaw, nil
+}
+
+func readBuildKitHeaderFragments(framer *http2.Framer, headers *http2.HeadersFrame) []byte {
+	fragments := append([]byte{}, headers.HeaderBlockFragment()...)
+	streamID := headers.Header().StreamID
+	for !headers.HeadersEnded() {
+		frame, err := framer.ReadFrame()
+		if err != nil {
+			break
+		}
+		continuation, ok := frame.(*http2.ContinuationFrame)
+		if !ok || continuation.Header().StreamID != streamID {
+			break
+		}
+		fragments = append(fragments, continuation.HeaderBlockFragment()...)
+		if continuation.HeadersEnded() {
+			break
+		}
+	}
+	return fragments
+}
+
+func decodeBuildKitHeaderPath(fragments []byte) (string, error) {
+	var methodPath string
+	decoder := hpack.NewDecoder(4096, func(field hpack.HeaderField) {
+		if field.Name == ":path" {
+			methodPath = field.Value
+		}
+	})
+	if _, err := decoder.Write(fragments); err != nil {
+		return "", err
+	}
+	return methodPath, nil
+}
+
+func auditBuildKitControlPayload(methodPath string, payload []byte, cfg *config.Config) (*audit.BuildKitAuditResult, error) {
+	if methodPath != buildKitControlSolveMethod {
+		return &audit.BuildKitAuditResult{}, nil
+	}
+
+	var req control.SolveRequest
+	if err := proto.Unmarshal(payload, &req); err != nil {
+		return nil, fmt.Errorf("decoding buildkit solve request: %w", err)
+	}
+	result, err := audit.AuditBuildKitSolve(&req, cfg)
+	if err != nil {
+		return nil, fmt.Errorf("auditing buildkit solve request: %w", err)
+	}
+	return result, nil
 }
