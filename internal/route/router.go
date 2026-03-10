@@ -143,8 +143,12 @@ func classifyTopLevel(parts []string, info RouteInfo) RouteInfo {
 			info.Kind = SystemInfo
 			return info
 		}
-		if parts[0] == "grpc" || parts[0] == "session" {
-			info.Kind = BuildKit
+		if parts[0] == "grpc" {
+			info.Kind = BuildKitControl
+			return info
+		}
+		if parts[0] == "session" {
+			info.Kind = BuildKitSession
 			return info
 		}
 		info.Kind = Denied

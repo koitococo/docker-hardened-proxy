@@ -59,8 +59,8 @@ func TestParse(t *testing.T) {
 		{"/version", Passthrough, "", "/version"},
 		{"/info", SystemInfo, "", "/info"},
 		{"/_ping", Passthrough, "", "/_ping"},
-		{"/grpc", BuildKit, "", "/grpc"},
-		{"/v1.41/grpc", BuildKit, "", "/grpc"},
+		{"/grpc", BuildKitControl, "", "/grpc"},
+		{"/v1.41/grpc", BuildKitControl, "", "/grpc"},
 		{"/", Passthrough, "", "/"},
 
 		// Auth
@@ -90,7 +90,7 @@ func TestParse(t *testing.T) {
 		{"/swarm/init", Denied, "", "/swarm/init"},
 		{"/services/create", Denied, "", "/services/create"},
 		{"/images/prune", Denied, "", "/images/prune"},
-		{"/session", BuildKit, "", "/session"},
+		{"/session", BuildKitSession, "", "/session"},
 	}
 
 	for _, tt := range tests {
@@ -146,7 +146,8 @@ func TestEndpointKindString(t *testing.T) {
 		{Build, "build"},
 		{ImagePull, "image_pull"},
 		{SystemInfo, "system_info"},
-		{BuildKit, "buildkit"},
+		{BuildKitControl, "buildkit_control"},
+		{BuildKitSession, "buildkit_session"},
 		{Auth, "auth"},
 		{ImagePush, "image_push"},
 		{Denied, "denied"},
