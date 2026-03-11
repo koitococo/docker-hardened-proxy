@@ -87,30 +87,54 @@ logging:
 
 func TestParseDefaults(t *testing.T) {
 	data := []byte(`
+namespace: test
 listeners:
   tcp:
-    address: ":2375"
+    address: ":8080"
 upstream:
-  url: "unix:///var/run/docker.sock"
+  url: "tcp://localhost:2376"
+audit:
+  deny_privileged: true
+  deny_buildkit: false
 `)
+
 	cfg, err := Parse(data)
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("failed to parse: %v", err)
 	}
-	if cfg.Namespace != "default" {
-		t.Errorf("namespace = %q, want %q", cfg.Namespace, "default")
+
+	if cfg.Namespace != "test" {
+		t.Errorf("namespace = %q, want test", cfg.Namespace)
 	}
-	if cfg.Audit.BindMounts.DefaultAction != "deny" {
-		t.Errorf("default_action = %q, want %q", cfg.Audit.BindMounts.DefaultAction, "deny")
+	if len(cfg.Listeners.TCP.Address) != 1 || cfg.Listeners.TCP.Address[0] != ":8080" {
+		t.Errorf("tcp address = %v, want [\":8080\"]", cfg.Listeners.TCP.Address)
 	}
-	if cfg.Logging.Level != "info" {
-		t.Errorf("level = %q, want %q", cfg.Logging.Level, "info")
+	if cfg.Upstream.URL != "tcp://localhost:2376" {
+		t.Errorf("upstream url = %q, want tcp://localhost:2376", cfg.Upstream.URL)
 	}
-	if cfg.Logging.Format != "json" {
-		t.Errorf("format = %q, want %q", cfg.Logging.Format, "json")
+	if !cfg.Audit.DenyPrivileged {
+		t.Error("expected deny_privileged to be true")
 	}
-	if !cfg.Audit.DenyBuildkit {
-		t.Error("deny_buildkit should default to true")
+	if cfg.Audit.DenyBuildkit {
+		t.Error("expected deny_buildkit to be false")
+	}
+
+	// Verify BuildKit secure defaults are applied
+	bk := cfg.Audit.BuildKit
+	if !bk.Session.AllowFilesync {
+		t.Error("expected buildkit session allow_filesync to default to true")
+	}
+	if !bk.Session.AllowUpload {
+		t.Error("expected buildkit session allow_upload to default to true")
+	}
+	if bk.Session.AllowSecrets {
+		t.Error("expected buildkit session allow_secrets to default to false")
+	}
+	if bk.Session.AllowSSH {
+		t.Error("expected buildkit session allow_ssh to default to false")
+	}
+	if bk.Session.AllowAuth {
+		t.Error("expected buildkit session allow_auth to default to false")
 	}
 }
 

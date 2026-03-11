@@ -19,81 +19,38 @@ upstream:
 namespace: "default"
 
 audit:
+  # Block creation of privileged containers
   deny_privileged: true
-  deny_security_opt_override: true
-  deny_devices: true
-  deny_info: true
-  deny_oom_kill_disable: true
-  deny_pids_limit_override: true
-  deny_log_config_override: true
-  denied_capabilities:
-    - "ALL"
-    - "SYS_ADMIN"
-    - "NET_ADMIN"
-  sysctls:
-    # "deny" (default): only allow sysctls in the allowed list
-    # "allow": allow all sysctls
-    default_action: "deny"
-    # allowed:
-    #   - "net.ipv4.ping_group_range"
-  bind_mounts:
-    default_action: "deny"
-    rules:
-      - source_prefix: "/home/ubuntu"
-        rewrite_prefix: "/path/to/container/home/ubuntu"
-        action: "allow"
-  namespaces:
-    network_mode:
-      deny_host: true
-    ipc_mode:
-      deny_host: true
-    pid_mode:
-      deny_host: true
-    uts_mode:
-      deny_host: true
-  build:
-    # "deny" (default): block all builds
-    # "allow": allow all builds (with security enforcement)
-    # "list": allow builds only for listed image names
-    policy: "deny"
-    # For "list" policy: allowed image name patterns.
-    # Entries ending with "/" act as prefix matches (e.g., "registry.example.com/").
-    # Other entries match the exact image name (with or without tag).
-    # allowed:
-    #   - "myapp"
-    #   - "registry.example.com/"
-    #
-    # Security enforcement (always active when builds are allowed):
-    #   - Dangerous entitlements (network.host, security.insecure) are stripped
-    #   - networkmode=host is denied
-    #   - BuildKit remains denied by default; if enabled, /session and /grpc use separate audit policy
-  pull:
-    # "allow" (default): allow all image pulls
-    # "deny": block all image pulls
-    # "list": allow pulls only for listed images/registries
-    policy: "allow"
-    # For "list" policy: allowed image name patterns (same syntax as build.allowed).
-    # allowed:
-    #   - "alpine"
-    #   - "docker.io/library/"
-  registry:
-    # "deny" (default): block all registry authentication and image push
-    # "allow": allow all registry operations
-    # "list": allow only for listed registries/images
-    auth: "deny"
-    # For "list" policy: allowed registry URL prefixes for authentication
-    # auth_allowed:
-    #   - "https://registry.example.com"
-    #   - "registry.example.com"
-    push: "deny"
-    # For "list" policy: allowed image name prefixes for push
-    # push_allowed:
-    #   - "registry.example.com/myapp/"
-    #   - "myregistry.com/"
-
-  # Top-level BuildKit kill switch.
-  # Default: true (deny all BuildKit control and session traffic)
+  # Block containers using host network mode
+  deny_host_network: true
+  # Block containers using host PID namespace
+  deny_host_pid: true
+  # Block containers using host IPC namespace
+  deny_host_ipc: true
+  # Block specific mount types (e.g., ["proc", "sysfs"])
+  deny_privileged_mounts: []
+  # Block BuildKit/buildx operations entirely
   deny_buildkit: true
+  # Fine-grained BuildKit policy (only applies when deny_buildkit is false)
+  buildkit:
+    # Allow disk usage queries
+    allow_disk_usage: false
+    # Allow prune operations (cleanup)
+    allow_prune: false
+    # Allow build history operations
+    allow_history: false
+    # Session service policies
+    session:
+      # Allow file sync operations (safe file transfers)
+      allow_filesync: true
+      # Allow upload operations (safe file transfers)
+      allow_upload: true
+      # Allow secret forwarding (disabled by default for security)
+      allow_secrets: false
+      # Allow SSH agent forwarding (disabled by default for security)
+      allow_ssh: false
+      # Allow authentication token operations (disabled by default for security)
+      allow_auth: false
 
   # Fine-grained BuildKit policy. These defaults apply when deny_buildkit is false.
   buildkit:

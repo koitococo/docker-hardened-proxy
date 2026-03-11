@@ -12,6 +12,7 @@ import (
 	"net/http"
 
 	control "github.com/moby/buildkit/api/services/control"
+	gateway "github.com/moby/buildkit/frontend/gateway/pb"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/audit"
@@ -33,6 +34,25 @@ const (
 	buildKitControlListenBuildHistoryMethod = "/moby.buildkit.v1.Control/ListenBuildHistory"
 	buildKitControlUpdateBuildHistoryMethod = "/moby.buildkit.v1.Control/UpdateBuildHistory"
 	buildKitControlMaxMessageSize           = 4 << 20
+
+	// LLBBridge (frontend) service methods
+	buildKitLLBBridgePingMethod               = "/moby.buildkit.v1.frontend.LLBBridge/Ping"
+	buildKitLLBBridgeResolveImageConfigMethod = "/moby.buildkit.v1.frontend.LLBBridge/ResolveImageConfig"
+	buildKitLLBBridgeResolveSourceMetaMethod  = "/moby.buildkit.v1.frontend.LLBBridge/ResolveSourceMeta"
+	buildKitLLBBridgeSolveMethod              = "/moby.buildkit.v1.frontend.LLBBridge/Solve"
+	buildKitLLBBridgeReadFileMethod           = "/moby.buildkit.v1.frontend.LLBBridge/ReadFile"
+	buildKitLLBBridgeReadDirMethod            = "/moby.buildkit.v1.frontend.LLBBridge/ReadDir"
+	buildKitLLBBridgeStatFileMethod           = "/moby.buildkit.v1.frontend.LLBBridge/StatFile"
+	buildKitLLBBridgeEvaluateMethod           = "/moby.buildkit.v1.frontend.LLBBridge/Evaluate"
+	buildKitLLBBridgeReturnMethod             = "/moby.buildkit.v1.frontend.LLBBridge/Return"
+	buildKitLLBBridgeInputsMethod             = "/moby.buildkit.v1.frontend.LLBBridge/Inputs"
+	buildKitLLBBridgeNewContainerMethod       = "/moby.buildkit.v1.frontend.LLBBridge/NewContainer"
+	buildKitLLBBridgeReleaseContainerMethod   = "/moby.buildkit.v1.frontend.LLBBridge/ReleaseContainer"
+	buildKitLLBBridgeExecProcessMethod        = "/moby.buildkit.v1.frontend.LLBBridge/ExecProcess"
+	buildKitLLBBridgeReadFileContainerMethod  = "/moby.buildkit.v1.frontend.LLBBridge/ReadFileContainer"
+	buildKitLLBBridgeReadDirContainerMethod   = "/moby.buildkit.v1.frontend.LLBBridge/ReadDirContainer"
+	buildKitLLBBridgeStatFileContainerMethod  = "/moby.buildkit.v1.frontend.LLBBridge/StatFileContainer"
+	buildKitLLBBridgeWarnMethod               = "/moby.buildkit.v1.frontend.LLBBridge/Warn"
 )
 
 type buildKitControlInspection struct {
@@ -398,6 +418,7 @@ func readUnaryGRPCMessage(framer *http2.Framer, streamID uint32, maxMessageSize 
 }
 
 func denyBuildKitControlMethod(methodPath string, cfg *config.Config) string {
+	// Control service methods
 	switch methodPath {
 	case buildKitControlSolveMethod, buildKitControlStatusMethod, buildKitControlListWorkersMethod, buildKitControlInfoMethod, buildKitControlTraceExportMethod:
 		return ""
@@ -405,30 +426,79 @@ func denyBuildKitControlMethod(methodPath string, cfg *config.Config) string {
 		if cfg.Audit.BuildKit.AllowDiskUsage {
 			return ""
 		}
+		return fmt.Sprintf("buildkit control method %q is denied by policy", methodPath)
 	case buildKitControlPruneMethod:
 		if cfg.Audit.BuildKit.AllowPrune {
 			return ""
 		}
+		return fmt.Sprintf("buildkit control method %q is denied by policy", methodPath)
 	case buildKitControlListenBuildHistoryMethod, buildKitControlUpdateBuildHistoryMethod:
 		if cfg.Audit.BuildKit.AllowHistory {
 			return ""
 		}
+		return fmt.Sprintf("buildkit control method %q is denied by policy", methodPath)
 	case buildKitControlSessionMethod:
 		return fmt.Sprintf("buildkit control method %q is denied by policy", methodPath)
-	default:
-		return fmt.Sprintf("unknown buildkit control method %q", methodPath)
 	}
 
-	return fmt.Sprintf("buildkit control method %q is denied by policy", methodPath)
+	// LLBBridge (frontend) service methods - safe read-only operations
+	switch methodPath {
+	case buildKitLLBBridgePingMethod,
+		buildKitLLBBridgeResolveImageConfigMethod,
+		buildKitLLBBridgeResolveSourceMetaMethod,
+		buildKitLLBBridgeReadFileMethod,
+		buildKitLLBBridgeReadDirMethod,
+		buildKitLLBBridgeStatFileMethod,
+		buildKitLLBBridgeEvaluateMethod,
+		buildKitLLBBridgeInputsMethod,
+		buildKitLLBBridgeReadFileContainerMethod,
+		buildKitLLBBridgeReadDirContainerMethod,
+		buildKitLLBBridgeStatFileContainerMethod,
+		buildKitLLBBridgeWarnMethod,
+		buildKitLLBBridgeReturnMethod:
+		// Return is used by frontend to return build results - safe to allow
+		return ""
+	case buildKitLLBBridgeSolveMethod:
+		// LLBBridge.Solve also needs auditing like Control.Solve
+		// For now, allow it but it will be audited if unary
+		return ""
+	case buildKitLLBBridgeNewContainerMethod,
+		buildKitLLBBridgeReleaseContainerMethod,
+		buildKitLLBBridgeExecProcessMethod:
+		// These involve container lifecycle or exec - deny by default
+		return fmt.Sprintf("buildkit frontend method %q is denied by policy", methodPath)
+	}
+
+	// Unknown method
+	return fmt.Sprintf("unknown buildkit control method %q", methodPath)
 }
 
 func isBuildKitUnaryMethod(methodPath string) bool {
 	switch methodPath {
+	// Control service unary methods
 	case buildKitControlDiskUsageMethod,
 		buildKitControlSolveMethod,
 		buildKitControlListWorkersMethod,
 		buildKitControlInfoMethod,
 		buildKitControlUpdateBuildHistoryMethod:
+		return true
+	// LLBBridge service unary methods
+	case buildKitLLBBridgePingMethod,
+		buildKitLLBBridgeResolveImageConfigMethod,
+		buildKitLLBBridgeResolveSourceMetaMethod,
+		buildKitLLBBridgeSolveMethod,
+		buildKitLLBBridgeReadFileMethod,
+		buildKitLLBBridgeReadDirMethod,
+		buildKitLLBBridgeStatFileMethod,
+		buildKitLLBBridgeEvaluateMethod,
+		buildKitLLBBridgeReturnMethod,
+		buildKitLLBBridgeInputsMethod,
+		buildKitLLBBridgeNewContainerMethod,
+		buildKitLLBBridgeReleaseContainerMethod,
+		buildKitLLBBridgeReadFileContainerMethod,
+		buildKitLLBBridgeReadDirContainerMethod,
+		buildKitLLBBridgeStatFileContainerMethod,
+		buildKitLLBBridgeWarnMethod:
 		return true
 	default:
 		return false
@@ -436,7 +506,7 @@ func isBuildKitUnaryMethod(methodPath string) bool {
 }
 
 func isBuildKitSolveMethod(methodPath string) bool {
-	return methodPath == buildKitControlSolveMethod
+	return methodPath == buildKitControlSolveMethod || methodPath == buildKitLLBBridgeSolveMethod
 }
 
 func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, headers *http2.HeadersFrame, path string, rawFrame []byte, cfg *config.Config) error {
@@ -668,17 +738,46 @@ func decodeBuildKitHeaderPath(fragments []byte) (string, error) {
 }
 
 func auditBuildKitControlPayload(methodPath string, payload []byte, cfg *config.Config) (*audit.BuildKitAuditResult, error) {
-	if methodPath != buildKitControlSolveMethod {
+	switch methodPath {
+	case buildKitControlSolveMethod:
+		var req control.SolveRequest
+		if err := proto.Unmarshal(payload, &req); err != nil {
+			return nil, fmt.Errorf("decoding buildkit control solve request: %w", err)
+		}
+		result, err := audit.AuditBuildKitSolve(&req, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("auditing buildkit control solve request: %w", err)
+		}
+		return result, nil
+	case buildKitLLBBridgeSolveMethod:
+		var req gateway.SolveRequest
+		if err := proto.Unmarshal(payload, &req); err != nil {
+			return nil, fmt.Errorf("decoding buildkit llbbridge solve request: %w", err)
+		}
+		// Convert LLBBridge SolveRequest to control SolveRequest for auditing
+		controlReq := convertLLBBridgeToControlSolveRequest(&req)
+		result, err := audit.AuditBuildKitSolve(controlReq, cfg)
+		if err != nil {
+			return nil, fmt.Errorf("auditing buildkit llbbridge solve request: %w", err)
+		}
+		return result, nil
+	default:
 		return &audit.BuildKitAuditResult{}, nil
 	}
+}
 
-	var req control.SolveRequest
-	if err := proto.Unmarshal(payload, &req); err != nil {
-		return nil, fmt.Errorf("decoding buildkit solve request: %w", err)
+// convertLLBBridgeToControlSolveRequest converts a gateway.SolveRequest to control.SolveRequest
+// for auditing purposes. This maps the common fields used for security checks.
+func convertLLBBridgeToControlSolveRequest(req *gateway.SolveRequest) *control.SolveRequest {
+	controlReq := &control.SolveRequest{
+		Definition: req.Definition,
+		Frontend:   req.Frontend,
 	}
-	result, err := audit.AuditBuildKitSolve(&req, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("auditing buildkit solve request: %w", err)
+	// Copy FrontendAttrs if present
+	if len(req.FrontendOpt) > 0 {
+		controlReq.FrontendAttrs = req.FrontendOpt
 	}
-	return result, nil
+	// Note: LLBBridge.Solve doesn't have Entitlements field directly
+	// It's typically handled through FrontendOpt
+	return controlReq
 }

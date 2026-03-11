@@ -22,9 +22,12 @@ const (
 	ImagePull
 	// SystemInfo is GET /info.
 	SystemInfo
-	// BuildKitControl is the BuildKit control gRPC endpoint (/grpc).
+	// BuildKit is the gRPC endpoint for BuildKit (/grpc).
+	// Deprecated: Use BuildKitControl and BuildKitSession instead.
+	BuildKit
+	// BuildKitControl is the BuildKit control endpoint (/grpc).
 	BuildKitControl
-	// BuildKitSession is the BuildKit session gRPC endpoint (/session).
+	// BuildKitSession is the BuildKit session endpoint (/session).
 	BuildKitSession
 	// Auth is POST /auth (registry authentication).
 	Auth
@@ -52,6 +55,8 @@ func (k EndpointKind) String() string {
 		return "image_pull"
 	case SystemInfo:
 		return "system_info"
+	case BuildKit:
+		return "buildkit"
 	case BuildKitControl:
 		return "buildkit_control"
 	case BuildKitSession:
