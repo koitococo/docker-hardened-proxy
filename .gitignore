@@ -2,3 +2,4 @@
 *.exe
 config.yaml
 .worktrees/
+.tmp/
