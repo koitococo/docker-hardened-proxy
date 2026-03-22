@@ -356,8 +356,9 @@ func TestProxyBuildKitControlFramesStreamsSafeSolveBeforeFullAuditCompletes(t *t
 func TestBufferBuildKitFrameReusesOwnedRawFrameBytes(t *testing.T) {
 	state := &buildKitControlStreamState{}
 	rawFrame := []byte{0x01, 0x02, 0x03, 0x04}
+	aggregateBufferedGRPC := 0
 
-	bufferBuildKitFrame(state, rawFrame, 2)
+	bufferBuildKitFrame(state, rawFrame, 2, &aggregateBufferedGRPC)
 
 	if len(state.PendingFrames) != 1 {
 		t.Fatalf("len(PendingFrames) = %d, want 1", len(state.PendingFrames))
@@ -367,6 +368,9 @@ func TestBufferBuildKitFrameReusesOwnedRawFrameBytes(t *testing.T) {
 	}
 	if &state.PendingFrames[0].raw[0] != &rawFrame[0] {
 		t.Fatal("expected buffered frame to reuse owned raw frame bytes")
+	}
+	if aggregateBufferedGRPC != 2 {
+		t.Fatalf("aggregateBufferedGRPC = %d, want 2", aggregateBufferedGRPC)
 	}
 }
 
@@ -384,6 +388,75 @@ func TestFrameCaptureReaderTakeReturnsOwnedCopy(t *testing.T) {
 	}
 	if &captured[0] == &source[0] {
 		t.Fatal("expected Take to return an owned copy")
+	}
+}
+
+func TestProxyBuildKitControlFramesRejectsAggregateBufferedSolveBytesOverLimit(t *testing.T) {
+	cfg := testCfg()
+	firstPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("alpha", 400)})
+	secondPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("beta", 400)})
+	firstChunk := buildBuildKitControlConnection(t,
+		buildKitControlRequestSpec{StreamID: 1, MethodPath: buildKitControlSolveMethod, Payload: firstPayload, SplitAt: 64},
+	)
+	secondChunk := buildBuildKitControlConnection(t,
+		buildKitControlRequestSpec{StreamID: 3, MethodPath: buildKitControlSolveMethod, Payload: secondPayload, SplitAt: 64},
+	)
+	raw := append(firstChunk, secondChunk[len(http2.ClientPreface)+9:]...)
+
+	var forwarded bytes.Buffer
+	err := proxyBuildKitControlFramesWithLimits(bytes.NewReader(raw), &forwarded, cfg, buildKitControlMaxMessageSize, 100)
+	if err == nil {
+		t.Fatal("expected aggregate buffering limit error")
+	}
+	if !strings.Contains(err.Error(), "aggregate buffered gRPC payload bytes") {
+		t.Fatalf("error = %q, want aggregate buffering failure", err)
+	}
+	if forwarded.Len() == 0 {
+		t.Fatal("expected headers to be forwarded before aggregate limit failure")
+	}
+}
+
+func TestProxyBuildKitControlFramesReleasesAggregateBufferedSolveBytesAfterAudit(t *testing.T) {
+	cfg := testCfg()
+	firstPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("safe", 400)})
+	secondPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("safe", 400)})
+	firstChunk, firstRemainder, _ := buildSplitBuildKitControlSolveRequest(t, 1, firstPayload, 64)
+	secondChunk, secondRemainder, _ := buildSplitBuildKitControlSolveRequest(t, 3, secondPayload, 64)
+	raw := append([]byte{}, firstChunk...)
+	raw = append(raw, firstRemainder...)
+	raw = append(raw, secondChunk[len(http2.ClientPreface)+9:]...)
+	raw = append(raw, secondRemainder...)
+
+	var forwarded bytes.Buffer
+	err := proxyBuildKitControlFramesWithLimits(bytes.NewReader(raw), &forwarded, cfg, buildKitControlMaxMessageSize, 2000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Equal(forwarded.Bytes(), raw) {
+		t.Fatal("expected full stream to be forwarded after buffered bytes were released")
+	}
+}
+
+func TestProxyBuildKitControlFramesReleasesAggregateBufferedSolveBytesOnRSTStream(t *testing.T) {
+	cfg := testCfg()
+	firstPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("safe", 400)})
+	secondPayload := mustMarshalBuildKitProto(t, &control.SolveRequest{Frontend: strings.Repeat("safe", 400)})
+	firstChunk, _, _ := buildSplitBuildKitControlSolveRequest(t, 1, firstPayload, 64)
+	secondChunk, secondRemainder, _ := buildSplitBuildKitControlSolveRequest(t, 3, secondPayload, 64)
+
+	rst := buildBuildKitControlRSTStreamChunk(t, 1)
+	raw := append([]byte{}, firstChunk...)
+	raw = append(raw, rst...)
+	raw = append(raw, secondChunk[len(http2.ClientPreface)+9:]...)
+	raw = append(raw, secondRemainder...)
+
+	var forwarded bytes.Buffer
+	err := proxyBuildKitControlFramesWithLimits(bytes.NewReader(raw), &forwarded, cfg, buildKitControlMaxMessageSize, 2000)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !bytes.Contains(forwarded.Bytes(), secondRemainder) {
+		t.Fatal("expected second solve stream to complete after RST_STREAM released buffered budget")
 	}
 }
 
@@ -569,6 +642,17 @@ func buildBuildKitControlHeadersChunk(t *testing.T, streamID uint32, methodPath 
 		EndStream:     endStream,
 	}); err != nil {
 		t.Fatalf("write headers: %v", err)
+	}
+	return raw.Bytes()
+}
+
+func buildBuildKitControlRSTStreamChunk(t *testing.T, streamID uint32) []byte {
+	t.Helper()
+
+	var raw bytes.Buffer
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteRSTStream(streamID, http2.ErrCodeCancel); err != nil {
+		t.Fatalf("write rst stream: %v", err)
 	}
 	return raw.Bytes()
 }

@@ -34,6 +34,7 @@ const (
 	buildKitControlListenBuildHistoryMethod = "/moby.buildkit.v1.Control/ListenBuildHistory"
 	buildKitControlUpdateBuildHistoryMethod = "/moby.buildkit.v1.Control/UpdateBuildHistory"
 	buildKitControlMaxMessageSize           = 4 << 20
+	buildKitControlMaxAggregateBufferedGRPC = 8 << 20
 
 	// LLBBridge (frontend) service methods
 	buildKitLLBBridgePingMethod               = "/moby.buildkit.v1.frontend.LLBBridge/Ping"
@@ -125,6 +126,10 @@ func auditBuildKitControlRequest(r io.Reader, cfg *config.Config) (*audit.BuildK
 }
 
 func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *config.Config) error {
+	return proxyBuildKitControlFramesWithLimits(client, upstream, cfg, buildKitControlMaxMessageSize, buildKitControlMaxAggregateBufferedGRPC)
+}
+
+func proxyBuildKitControlFramesWithLimits(client io.Reader, upstream io.Writer, cfg *config.Config, maxMessageSize int, maxAggregateBufferedGRPC int) error {
 	preface := make([]byte, len(http2.ClientPreface))
 	if _, err := io.ReadFull(client, preface); err != nil {
 		return fmt.Errorf("reading HTTP/2 client preface: %w", err)
@@ -140,6 +145,7 @@ func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *confi
 	framer := http2.NewFramer(io.Discard, capture)
 	headerDecoder := newBuildKitHeaderDecoder()
 	streams := make(map[uint32]*buildKitControlStreamState)
+	aggregateBufferedGRPC := 0
 
 	for {
 		frame, err := framer.ReadFrame()
@@ -157,13 +163,14 @@ func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *confi
 				return err
 			}
 		case *http2.WindowUpdateFrame, *http2.PriorityFrame:
-			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame); err != nil {
+			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame, &aggregateBufferedGRPC); err != nil {
 				return err
 			}
 		case *http2.RSTStreamFrame:
 			streamID := typed.Header().StreamID
 			state, ok := streams[streamID]
 			if ok && !state.Allowed {
+				releaseBuildKitBufferedGRPC(state, &aggregateBufferedGRPC)
 				delete(streams, streamID)
 				continue
 			}
@@ -176,15 +183,15 @@ func proxyBuildKitControlFrames(client io.Reader, upstream io.Writer, cfg *confi
 			if err != nil {
 				return err
 			}
-			if err := processBuildKitHeadersFrame(upstream, streams, typed, path, completeRaw, cfg); err != nil {
+			if err := processBuildKitHeadersFrame(upstream, streams, typed, path, completeRaw, cfg, &aggregateBufferedGRPC); err != nil {
 				return err
 			}
 		case *http2.DataFrame:
-			if err := processBuildKitDataFrame(upstream, streams, typed, rawFrame, cfg); err != nil {
+			if err := processBuildKitDataFrame(upstream, streams, typed, rawFrame, cfg, maxMessageSize, maxAggregateBufferedGRPC, &aggregateBufferedGRPC); err != nil {
 				return err
 			}
 		default:
-			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame); err != nil {
+			if err := forwardBuildKitStreamFrame(upstream, streams, frame.Header().StreamID, rawFrame, &aggregateBufferedGRPC); err != nil {
 				return err
 			}
 		}
@@ -513,7 +520,7 @@ func isBuildKitSolveMethod(methodPath string) bool {
 	return methodPath == buildKitControlSolveMethod || methodPath == buildKitLLBBridgeSolveMethod
 }
 
-func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, headers *http2.HeadersFrame, path string, rawFrame []byte, cfg *config.Config) error {
+func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, headers *http2.HeadersFrame, path string, rawFrame []byte, cfg *config.Config, aggregateBufferedGRPC *int) error {
 	streamID := headers.Header().StreamID
 	state, ok := streams[streamID]
 	if path == "" {
@@ -525,9 +532,10 @@ func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKi
 				return err
 			}
 		} else {
-			bufferBuildKitFrame(state, rawFrame, 0)
+			bufferBuildKitFrame(state, rawFrame, 0, aggregateBufferedGRPC)
 		}
 		if headers.StreamEnded() {
+			releaseBuildKitBufferedGRPC(state, aggregateBufferedGRPC)
 			delete(streams, streamID)
 		}
 		return nil
@@ -557,7 +565,7 @@ func processBuildKitHeadersFrame(upstream io.Writer, streams map[uint32]*buildKi
 	return nil
 }
 
-func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, frame *http2.DataFrame, rawFrame []byte, cfg *config.Config) error {
+func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, frame *http2.DataFrame, rawFrame []byte, cfg *config.Config, maxMessageSize int, maxAggregateBufferedGRPC int, aggregateBufferedGRPC *int) error {
 	streamID := frame.Header().StreamID
 	state, ok := streams[streamID]
 	if !ok {
@@ -568,12 +576,16 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 			return err
 		}
 		if frame.StreamEnded() {
+			releaseBuildKitBufferedGRPC(state, aggregateBufferedGRPC)
 			delete(streams, streamID)
 		}
 		return nil
 	}
 
-	bufferBuildKitFrame(state, rawFrame, len(frame.Data()))
+	bufferBuildKitFrame(state, rawFrame, len(frame.Data()), aggregateBufferedGRPC)
+	if *aggregateBufferedGRPC > maxAggregateBufferedGRPC {
+		return fmt.Errorf("aggregate buffered gRPC payload bytes %d exceeds limit %d", *aggregateBufferedGRPC, maxAggregateBufferedGRPC)
+	}
 	state.GRPCData.Write(frame.Data())
 	if state.MessageLength < 0 && state.GRPCData.Len() >= 5 {
 		envelope := state.GRPCData.Bytes()
@@ -581,11 +593,11 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 			return fmt.Errorf("gRPC message compression is not supported")
 		}
 		state.MessageLength = int(binary.BigEndian.Uint32(envelope[1:5]))
-		if state.MessageLength > buildKitControlMaxMessageSize {
-			return fmt.Errorf("gRPC message length %d exceeds limit %d", state.MessageLength, buildKitControlMaxMessageSize)
+		if state.MessageLength > maxMessageSize {
+			return fmt.Errorf("gRPC message length %d exceeds limit %d", state.MessageLength, maxMessageSize)
 		}
 	}
-	if err := flushBuildKitSolvePrefix(upstream, state); err != nil {
+	if err := flushBuildKitSolvePrefix(upstream, state, aggregateBufferedGRPC); err != nil {
 		return err
 	}
 	if state.MessageLength >= 0 && state.GRPCData.Len() >= 5+state.MessageLength {
@@ -601,10 +613,11 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 			return errors.New(result.Reason)
 		}
 		state.Allowed = true
-		if err := flushAllBuildKitFrames(upstream, state); err != nil {
+		if err := flushAllBuildKitFrames(upstream, state, aggregateBufferedGRPC); err != nil {
 			return err
 		}
 		if frame.StreamEnded() {
+			releaseBuildKitBufferedGRPC(state, aggregateBufferedGRPC)
 			delete(streams, streamID)
 		}
 		return nil
@@ -615,7 +628,7 @@ func processBuildKitDataFrame(upstream io.Writer, streams map[uint32]*buildKitCo
 	return nil
 }
 
-func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, streamID uint32, rawFrame []byte) error {
+func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKitControlStreamState, streamID uint32, rawFrame []byte, aggregateBufferedGRPC *int) error {
 	if streamID == 0 {
 		return writeRawBuildKitFrame(upstream, rawFrame)
 	}
@@ -623,7 +636,7 @@ func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKit
 	if !ok || state.Allowed {
 		return writeRawBuildKitFrame(upstream, rawFrame)
 	}
-	bufferBuildKitFrame(state, rawFrame, 0)
+	bufferBuildKitFrame(state, rawFrame, 0, aggregateBufferedGRPC)
 	return nil
 }
 
@@ -631,15 +644,19 @@ func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKit
 // Callers must only pass frame bytes obtained from frameCaptureReader.Take or an
 // equivalent immutable copy, because buffered frames are retained for later
 // forwarding without taking an additional defensive copy here.
-func bufferBuildKitFrame(state *buildKitControlStreamState, rawFrame []byte, grpcBytes int) {
+func bufferBuildKitFrame(state *buildKitControlStreamState, rawFrame []byte, grpcBytes int, aggregateBufferedGRPC *int) {
 	state.PendingFrames = append(state.PendingFrames, buildKitBufferedFrame{
 		raw:       rawFrame,
 		grpcBytes: grpcBytes,
 	})
+	// aggregateBufferedGRPC intentionally tracks buffered gRPC DATA payload bytes,
+	// not total buffered raw frame bytes. This bounds unaudited solve message data
+	// without conflating it with protocol framing overhead.
 	state.PendingGRPCBytes += grpcBytes
+	*aggregateBufferedGRPC += grpcBytes
 }
 
-func flushBuildKitSolvePrefix(upstream io.Writer, state *buildKitControlStreamState) error {
+func flushBuildKitSolvePrefix(upstream io.Writer, state *buildKitControlStreamState, aggregateBufferedGRPC *int) error {
 	if state.MessageLength < 0 {
 		return nil
 	}
@@ -654,21 +671,31 @@ func flushBuildKitSolvePrefix(upstream io.Writer, state *buildKitControlStreamSt
 			return err
 		}
 		state.PendingGRPCBytes -= frame.grpcBytes
+		*aggregateBufferedGRPC -= frame.grpcBytes
 		state.PendingFrames = state.PendingFrames[1:]
 	}
 	return nil
 }
 
-func flushAllBuildKitFrames(upstream io.Writer, state *buildKitControlStreamState) error {
+func flushAllBuildKitFrames(upstream io.Writer, state *buildKitControlStreamState, aggregateBufferedGRPC *int) error {
 	for len(state.PendingFrames) > 0 {
 		frame := state.PendingFrames[0]
 		if err := writeRawBuildKitFrame(upstream, frame.raw); err != nil {
 			return err
 		}
 		state.PendingGRPCBytes -= frame.grpcBytes
+		*aggregateBufferedGRPC -= frame.grpcBytes
 		state.PendingFrames = state.PendingFrames[1:]
 	}
 	return nil
+}
+
+func releaseBuildKitBufferedGRPC(state *buildKitControlStreamState, aggregateBufferedGRPC *int) {
+	if state.PendingGRPCBytes == 0 {
+		return
+	}
+	*aggregateBufferedGRPC -= state.PendingGRPCBytes
+	state.PendingGRPCBytes = 0
 }
 
 func writeRawBuildKitFrame(upstream io.Writer, raw []byte) error {
