@@ -15,6 +15,7 @@
 
 - 单用例执行：进入 `tests/` 目录后运行 `uv run python3 <test_name>/run_test.py`。
 - 全量执行：在 `tests/` 目录运行 `uv run python3 run_all.py`。
+- 并行执行：在 `tests/` 目录运行 `uv run python3 run_parallel.py`。
 
 ## 环境变量
 
@@ -30,3 +31,10 @@
 - Python 依赖通过 `uv` 管理。
 - 初始化依赖：`uv sync`
 - 所有测试应优先使用 `uv run` 执行，确保依赖版本一致。
+
+## 报告输出
+
+- 并行执行脚本会写入：
+  - `tests/reports/latest.json`
+  - `tests/reports/latest.txt`
+- 可通过 `uv run python3 run_parallel.py --workers 4` 控制并发数。

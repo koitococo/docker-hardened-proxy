@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import fcntl
 import shutil
 import subprocess
 import tempfile
@@ -20,6 +21,7 @@ ROOT_DIR = Path(__file__).resolve().parents[2]
 TESTS_DIR = ROOT_DIR / "tests"
 BUILD_DIR = TESTS_DIR / ".build"
 BIN_PATH = BUILD_DIR / "docker-hardened-proxy"
+BIN_LOCK_PATH = BUILD_DIR / ".build.lock"
 
 
 def require_docker_host() -> str:
@@ -31,20 +33,24 @@ def require_docker_host() -> str:
 
 def ensure_binary() -> Path:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
-    if BIN_PATH.exists():
-        return BIN_PATH
+    with BIN_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        if BIN_PATH.exists():
+            return BIN_PATH
 
-    subprocess.run(
-        [
-            "go",
-            "build",
-            "-o",
-            str(BIN_PATH),
-            "./cmd/docker-hardened-proxy",
-        ],
-        cwd=ROOT_DIR,
-        check=True,
-    )
+        temp_path = BUILD_DIR / "docker-hardened-proxy.tmp"
+        subprocess.run(
+            [
+                "go",
+                "build",
+                "-o",
+                str(temp_path),
+                "./cmd/docker-hardened-proxy",
+            ],
+            cwd=ROOT_DIR,
+            check=True,
+        )
+        temp_path.replace(BIN_PATH)
     return BIN_PATH
 
 
