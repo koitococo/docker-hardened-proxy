@@ -197,3 +197,102 @@ func TestMatchAllowed(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchAllowedRegistryWithPort(t *testing.T) {
+	allowed := []string{"registry.example.com:5000/team/app"}
+
+	if !matchAllowed("registry.example.com:5000/team/app", allowed) {
+		t.Fatal("expected registry host:port image to match exact allowlist entry")
+	}
+}
+
+func TestMatchAllowedDigestReferenceUsesRepositoryIdentity(t *testing.T) {
+	allowed := []string{"myapp", "registry.example.com:5000/team/app"}
+
+	tests := []struct {
+		name    string
+		ref     string
+		allowed bool
+	}{
+		{
+			name:    "digest matches simple repository entry",
+			ref:     "myapp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			allowed: true,
+		},
+		{
+			name:    "digest matches host port repository entry",
+			ref:     "registry.example.com:5000/team/app@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			allowed: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := matchAllowed(tt.ref, allowed); got != tt.allowed {
+				t.Fatalf("matchAllowed(%q) = %v, want %v", tt.ref, got, tt.allowed)
+			}
+		})
+	}
+}
+
+func TestMatchAllowedNormalizesDockerHubReferences(t *testing.T) {
+	allowed := []string{"alpine", "docker.io/library/busybox"}
+
+	tests := []struct {
+		name string
+		ref  string
+	}{
+		{
+			name: "familiar name matches canonical docker hub reference",
+			ref:  "docker.io/library/alpine:latest",
+		},
+		{
+			name: "canonical name matches familiar docker hub allowlist entry",
+			ref:  "busybox",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if !matchAllowed(tt.ref, allowed) {
+				t.Fatalf("expected %q to match allowlist %v", tt.ref, allowed)
+			}
+		})
+	}
+}
+
+func TestMatchAllowedDigestSpecificRuleRequiresExactDigest(t *testing.T) {
+	allowed := []string{"myapp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}
+
+	if !matchAllowed("myapp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", allowed) {
+		t.Fatal("expected exact digest match to be allowed")
+	}
+	if matchAllowed("myapp@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", allowed) {
+		t.Fatal("expected different digest to be denied")
+	}
+}
+
+func TestMatchAllowedTagSpecificRuleRequiresExactTag(t *testing.T) {
+	allowed := []string{"myapp:v1"}
+
+	if !matchAllowed("myapp:v1", allowed) {
+		t.Fatal("expected exact tag match to be allowed")
+	}
+	if matchAllowed("myapp:v2", allowed) {
+		t.Fatal("expected different tag to be denied")
+	}
+	if matchAllowed("myapp@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", allowed) {
+		t.Fatal("expected digest reference to be denied by tag-specific rule")
+	}
+}
+
+func TestMatchAllowedPrefixRuleRespectsRepositoryBoundaries(t *testing.T) {
+	allowed := []string{"registry.example.com/team/"}
+
+	if !matchAllowed("registry.example.com/team/app:latest", allowed) {
+		t.Fatal("expected repository below prefix to be allowed")
+	}
+	if matchAllowed("registry.example.com/teamish/app:latest", allowed) {
+		t.Fatal("expected adjacent repository prefix to be denied")
+	}
+}

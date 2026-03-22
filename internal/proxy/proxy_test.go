@@ -894,7 +894,7 @@ func TestHandlerPullListPolicy(t *testing.T) {
 	}
 
 	// Denied
-	req = httptest.NewRequest("POST", "/v1.41/images/create?fromImage=evil-image", nil)
+	req = httptest.NewRequest("POST", "/v1.41/images/create?fromImage=evilcorp/evil-image", nil)
 	w = httptest.NewRecorder()
 	h.ServeHTTP(w, req)
 	if w.Code != http.StatusForbidden {
