@@ -12,6 +12,8 @@ from pathlib import Path
 import requests_unixsocket
 import json
 import tarfile
+import base64
+import socket
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -99,6 +101,24 @@ def docker_api_request(
     return response.status_code, response.content
 
 
+def buildkit_session_request(proxy_socket: Path, method_name: str) -> tuple[int, bytes]:
+    return docker_api_request(
+        proxy_socket,
+        "POST",
+        "/session",
+        headers={
+            "Connection": "Upgrade, HTTP2-Settings",
+            "Upgrade": "h2c",
+            "HTTP2-Settings": "AAMAAABkAAQAAP__",
+            "X-Docker-Expose-Session-Grpc-Method": method_name,
+        },
+    )
+
+
+def buildkit_control_request(proxy_socket: Path, method_path: str) -> tuple[int, bytes]:
+    raise NotImplementedError("use docker buildx CLI for BuildKit integration tests")
+
+
 def docker_api_json(
     proxy_socket: Path,
     method: str,
@@ -127,8 +147,77 @@ def docker_cli(
     docker_config = TESTS_DIR / ".docker-config"
     docker_config.mkdir(parents=True, exist_ok=True)
     env["DOCKER_CONFIG"] = str(docker_config)
+    cli_plugins_dir = Path.home() / ".docker" / "cli-plugins"
+    if cli_plugins_dir.exists():
+        env["DOCKER_CLI_PLUGIN_EXTRA_DIRS"] = str(cli_plugins_dir)
     return subprocess.run(
         ["docker", *args],
+        cwd=ROOT_DIR,
+        env=env,
+        check=check,
+        text=True,
+        capture_output=True,
+    )
+
+
+def docker_buildx_cli(
+    host: str, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["DOCKER_HOST"] = host
+    env.pop("DOCKER_CONTEXT", None)
+    cli_plugins_dir = Path.home() / ".docker" / "cli-plugins"
+    if cli_plugins_dir.exists():
+        env["DOCKER_CLI_PLUGIN_EXTRA_DIRS"] = str(cli_plugins_dir)
+    return subprocess.run(
+        ["docker", "buildx", *args],
+        cwd=ROOT_DIR,
+        env=env,
+        check=check,
+        text=True,
+        capture_output=True,
+    )
+
+
+def write_file(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def buildx_create_builder(proxy_host: str, name: str) -> None:
+    docker_buildx_cli(proxy_host, "rm", name, check=False)
+    docker_buildx_cli(proxy_host, "create", "--name", name, "--use", "--bootstrap")
+
+
+def buildx_remove_builder(proxy_host: str, name: str) -> None:
+    docker_buildx_cli(proxy_host, "rm", name, check=False)
+
+
+def buildx_build(
+    proxy_host: str,
+    builder_name: str,
+    context_dir: Path,
+    *args: str,
+    check: bool = True,
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["DOCKER_HOST"] = proxy_host
+    env["BUILDKIT_PROGRESS"] = "plain"
+    env.pop("DOCKER_CONTEXT", None)
+    cli_plugins_dir = Path.home() / ".docker" / "cli-plugins"
+    if cli_plugins_dir.exists():
+        env["DOCKER_CLI_PLUGIN_EXTRA_DIRS"] = str(cli_plugins_dir)
+    return subprocess.run(
+        [
+            "docker",
+            "buildx",
+            "build",
+            "--builder",
+            builder_name,
+            "--progress=plain",
+            *args,
+            str(context_dir),
+        ],
         cwd=ROOT_DIR,
         env=env,
         check=check,
