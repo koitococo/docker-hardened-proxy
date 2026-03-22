@@ -21,6 +21,11 @@ namespace: "default"
 audit:
   # Block creation of privileged containers
   deny_privileged: true
+  # Response body for ordinary HTTP 403 policy denials.
+  # "reason" keeps the legacy detailed response body for compatibility.
+  # "generic" returns a fixed "denied by policy" message to reduce detail exposure.
+  # Does not affect deny behavior inside hijacked BuildKit control streams.
+  denied_response_mode: "reason"
   # Block containers using host network mode
   deny_host_network: true
   # Block containers using host PID namespace
@@ -50,21 +55,6 @@ audit:
       # Allow SSH agent forwarding (disabled by default for security)
       allow_ssh: false
       # Allow authentication token operations (disabled by default for security)
-      allow_auth: false
-
-  # Fine-grained BuildKit policy. These defaults apply when deny_buildkit is false.
-  buildkit:
-    # Allow read-only worker info by default, but keep higher-risk control methods denied.
-    allow_disk_usage: false
-    allow_prune: false
-    allow_history: false
-    session:
-      # Buildx file transfer paths are allowed by default.
-      allow_filesync: true
-      allow_upload: true
-      # High-risk session services stay denied unless explicitly enabled.
-      allow_secrets: false
-      allow_ssh: false
       allow_auth: false
 
 logging:

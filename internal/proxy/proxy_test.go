@@ -999,3 +999,101 @@ func TestExtractImageNameFromPushPath(t *testing.T) {
 		})
 	}
 }
+
+func TestHandlerDeniedResponseContainerCreateReasonMode(t *testing.T) {
+	cfg := testCfg()
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	body := `{"Image":"alpine","HostConfig":{"Privileged":true}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1.41/containers/create", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if got := w.Body.String(); got != "denied: privileged mode is denied\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestHandlerDeniedResponseContainerCreateGenericMode(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DeniedResponseMode = config.DeniedResponseModeGeneric
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	body := `{"Image":"alpine","HostConfig":{"Privileged":true}}`
+	req := httptest.NewRequest(http.MethodPost, "/v1.41/containers/create", bytes.NewBufferString(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if got := w.Body.String(); got != "denied by policy\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestHandlerDeniedResponseUnknownEndpointReasonMode(t *testing.T) {
+	h := newTestHandler(t, testCfg(), &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodGet, "/definitely-not-allowed", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if got := w.Body.String(); got != "denied: endpoint not allowed\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestHandlerDeniedResponseBuildKitGenericMode(t *testing.T) {
+	cfg := testCfg()
+	cfg.Audit.DenyBuildkit = true
+	cfg.Audit.DeniedResponseMode = config.DeniedResponseModeGeneric
+	h := newTestHandler(t, cfg, &mockDocker{})
+
+	req := httptest.NewRequest(http.MethodPost, "/session", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if got := w.Body.String(); got != "denied by policy\n" {
+		t.Fatalf("body = %q", got)
+	}
+}
+
+func TestHandlerDeniedResponseNamespaceGenericMode(t *testing.T) {
+	dc := &mockDocker{
+		containers: map[string]types.ContainerJSON{
+			"foreign_ctr": {
+				Config: &containertypes.Config{
+					Labels: map[string]string{
+						"ltkk.run/namespace": "other",
+					},
+				},
+			},
+		},
+	}
+	cfg := testCfg()
+	cfg.Audit.DeniedResponseMode = config.DeniedResponseModeGeneric
+	h := newTestHandler(t, cfg, dc)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1.41/containers/foreign_ctr/start", nil)
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, req)
+
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("status = %d, want %d", w.Code, http.StatusForbidden)
+	}
+	if got := w.Body.String(); got != "denied by policy\n" {
+		t.Fatalf("body = %q", got)
+	}
+}

@@ -86,7 +86,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"id", info.ID,
 				"reason", err.Error(),
 			)
-			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			h.writeDeniedResponse(w, err.Error())
 			return
 		}
 		h.handleExecCreate(w, r)
@@ -98,7 +98,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"id", info.ID,
 				"reason", err.Error(),
 			)
-			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			h.writeDeniedResponse(w, err.Error())
 			return
 		}
 	case route.ExecOp:
@@ -108,7 +108,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"id", info.ID,
 				"reason", err.Error(),
 			)
-			http.Error(w, "denied: "+err.Error(), http.StatusForbidden)
+			h.writeDeniedResponse(w, err.Error())
 			return
 		}
 	case route.SystemInfo:
@@ -117,7 +117,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				"endpoint", info.Kind.String(),
 				"reason", "system info is denied by policy",
 			)
-			http.Error(w, "denied: system info is denied by policy", http.StatusForbidden)
+			h.writeDeniedResponse(w, "system info is denied by policy")
 			return
 		}
 	case route.ImagePull:
@@ -160,7 +160,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"path", r.URL.Path,
 			"reason", "endpoint not allowed",
 		)
-		http.Error(w, "denied: endpoint not allowed", http.StatusForbidden)
+		h.writeDeniedResponse(w, "endpoint not allowed")
 		return
 	}
 
@@ -194,6 +194,14 @@ func (h *Handler) checkExecNamespace(r *http.Request, info route.RouteInfo) erro
 		return nil
 	}
 	return audit.CheckExec(r.Context(), h.docker, info.ID, h.cfg.Namespace)
+}
+
+func (h *Handler) writeDeniedResponse(w http.ResponseWriter, reason string) {
+	message := "denied: " + reason
+	if h.cfg.Audit.DeniedResponseMode == config.DeniedResponseModeGeneric {
+		message = "denied by policy"
+	}
+	http.Error(w, message, http.StatusForbidden)
 }
 
 func (h *Handler) handleContainerList(w http.ResponseWriter, r *http.Request) {
@@ -230,7 +238,7 @@ func (h *Handler) handleExecCreate(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "exec_create",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -249,7 +257,7 @@ func (h *Handler) handleImagePull(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "image_pull",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -264,7 +272,7 @@ func (h *Handler) handleBuild(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "build",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -280,7 +288,7 @@ func (h *Handler) handleBuildKit(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "buildkit",
 			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
 		)
-		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		h.writeDeniedResponse(w, "buildkit is disabled by policy")
 		return
 	}
 
@@ -296,7 +304,7 @@ func (h *Handler) handleBuildKitSession(w http.ResponseWriter, r *http.Request) 
 			"endpoint", "buildkit_session",
 			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
 		)
-		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		h.writeDeniedResponse(w, "buildkit is disabled by policy")
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -314,7 +322,7 @@ func (h *Handler) handleBuildKitSession(w http.ResponseWriter, r *http.Request) 
 			"endpoint", "buildkit_session",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -327,7 +335,7 @@ func (h *Handler) handleBuildKitControl(w http.ResponseWriter, r *http.Request) 
 			"endpoint", "buildkit_control",
 			"reason", "buildkit is denied by policy (audit.deny_buildkit)",
 		)
-		http.Error(w, "denied: buildkit is disabled by policy", http.StatusForbidden)
+		h.writeDeniedResponse(w, "buildkit is disabled by policy")
 		return
 	}
 	if r.Method != http.MethodPost {
@@ -357,7 +365,7 @@ func (h *Handler) handleAuth(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "auth",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -380,7 +388,7 @@ func (h *Handler) handleImagePush(w http.ResponseWriter, r *http.Request) {
 			"endpoint", "image_push",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -451,7 +459,7 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 			"endpoint", "container_create",
 			"reason", result.Reason,
 		)
-		http.Error(w, "denied: "+result.Reason, http.StatusForbidden)
+		h.writeDeniedResponse(w, result.Reason)
 		return
 	}
 
@@ -463,7 +471,7 @@ func (h *Handler) handleContainerCreate(w http.ResponseWriter, r *http.Request) 
 				"reason", "namespace mode references foreign container",
 				"ref_container", refID,
 			)
-			http.Error(w, "denied: namespace mode container:"+refID+" references a container outside this namespace", http.StatusForbidden)
+			h.writeDeniedResponse(w, "namespace mode container:"+refID+" references a container outside this namespace")
 			return
 		}
 	}

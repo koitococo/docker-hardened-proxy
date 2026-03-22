@@ -1,6 +1,7 @@
 package config
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -468,5 +469,86 @@ audit:
 	_, err := Parse(data)
 	if err == nil {
 		t.Fatal("expected error for list policy with empty allowed")
+	}
+}
+
+func TestParseDeniedResponseMode(t *testing.T) {
+	tests := []struct {
+		name     string
+		config   string
+		wantMode string
+		wantErr  string
+	}{
+		{
+			name: "default mode",
+			config: `
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+`,
+			wantMode: "reason",
+		},
+		{
+			name: "explicit reason mode",
+			config: `
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  denied_response_mode: "reason"
+`,
+			wantMode: "reason",
+		},
+		{
+			name: "explicit generic mode",
+			config: `
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  denied_response_mode: "generic"
+`,
+			wantMode: "generic",
+		},
+		{
+			name: "invalid mode",
+			config: `
+listeners:
+  tcp:
+    address: ":2375"
+upstream:
+  url: "unix:///var/run/docker.sock"
+audit:
+  denied_response_mode: "noisy"
+`,
+			wantErr: "audit.denied_response_mode",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg, err := Parse([]byte(tt.config))
+			if tt.wantErr != "" {
+				if err == nil {
+					t.Fatal("expected error for denied_response_mode")
+				}
+				if got := err.Error(); got == "" || !strings.Contains(got, tt.wantErr) {
+					t.Fatalf("error = %q, want substring %q", got, tt.wantErr)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if cfg.Audit.DeniedResponseMode != tt.wantMode {
+				t.Fatalf("denied_response_mode = %q, want %q", cfg.Audit.DeniedResponseMode, tt.wantMode)
+			}
+		})
 	}
 }

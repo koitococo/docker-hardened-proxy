@@ -105,6 +105,11 @@ type UpstreamTLSConfig struct {
 	Key  string `yaml:"key"`  // path to client key PEM
 }
 
+const (
+	DeniedResponseModeReason  = "reason"
+	DeniedResponseModeGeneric = "generic"
+)
+
 type AuditConfig struct {
 	DenyPrivileged          bool             `yaml:"deny_privileged"`
 	DenySecurityOptOverride bool             `yaml:"deny_security_opt_override"`
@@ -122,6 +127,7 @@ type AuditConfig struct {
 	Registry                RegistryConfig   `yaml:"registry"`
 	BuildKit                BuildKitConfig   `yaml:"buildkit"`
 	DenyBuildkit            bool             `yaml:"deny_buildkit"`
+	DeniedResponseMode      string           `yaml:"denied_response_mode"`
 }
 
 type BuildConfig struct {
@@ -222,7 +228,8 @@ func Parse(data []byte) (*Config, error) {
 func defaultConfig() Config {
 	return Config{
 		Audit: AuditConfig{
-			DenyBuildkit: true,
+			DenyBuildkit:       true,
+			DeniedResponseMode: DeniedResponseModeReason,
 			BuildKit: BuildKitConfig{
 				Session: BuildKitSessionConfig{
 					AllowFilesync: true,
@@ -306,6 +313,9 @@ func (c *Config) validate() error {
 	}
 	if c.Audit.Build.Policy == "list" && len(c.Audit.Build.Allowed) == 0 {
 		return fmt.Errorf("audit.build.allowed must not be empty when policy is 'list'")
+	}
+	if c.Audit.DeniedResponseMode != DeniedResponseModeReason && c.Audit.DeniedResponseMode != DeniedResponseModeGeneric {
+		return fmt.Errorf("audit.denied_response_mode must be %q or %q, got %q", DeniedResponseModeReason, DeniedResponseModeGeneric, c.Audit.DeniedResponseMode)
 	}
 	pullPolicy := c.Audit.Pull.Policy
 	if pullPolicy == "" {

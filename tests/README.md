@@ -10,6 +10,7 @@
   - `config.yaml`
   - `run_test.py`
 - 每个测试必须独立创建并清理自己的资源，避免与其他测试共享状态。
+- 涉及 403 响应体断言的用例必须说明其依赖的 `audit.denied_response_mode`；默认配置沿用 `reason` 模式。
 
 ## 推荐执行方式
 
