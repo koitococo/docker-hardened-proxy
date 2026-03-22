@@ -125,6 +125,125 @@ func TestBuildKitControlInspectorRejectsTruncatedMessage(t *testing.T) {
 	}
 }
 
+func TestReadBuildKitHeaderFragmentsRejectsUnexpectedContinuationStream(t *testing.T) {
+	var raw bytes.Buffer
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      1,
+		BlockFragment: []byte{0x82},
+		EndHeaders:    false,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	if err := framer.WriteContinuation(3, true, []byte{0x84}); err != nil {
+		t.Fatalf("write continuation: %v", err)
+	}
+
+	reader := bytes.NewReader(raw.Bytes())
+	readFramer := http2.NewFramer(io.Discard, reader)
+	frame, err := readFramer.ReadFrame()
+	if err != nil {
+		t.Fatalf("read headers frame: %v", err)
+	}
+	headers, ok := frame.(*http2.HeadersFrame)
+	if !ok {
+		t.Fatalf("frame = %T, want *http2.HeadersFrame", frame)
+	}
+
+	_, err = readBuildKitHeaderFragments(readFramer, headers)
+	if err == nil {
+		t.Fatal("expected malformed continuation stream error")
+	}
+	if !strings.Contains(err.Error(), "PROTOCOL_ERROR") && !strings.Contains(err.Error(), "unexpected stream") {
+		t.Fatalf("error = %q, want fail-closed continuation failure", err)
+	}
+}
+
+func TestReadBuildKitHeaderFragmentsRejectsNonContinuationFrame(t *testing.T) {
+	var raw bytes.Buffer
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      1,
+		BlockFragment: []byte{0x82},
+		EndHeaders:    false,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	if err := framer.WriteData(1, true, []byte("not-a-continuation")); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+
+	reader := bytes.NewReader(raw.Bytes())
+	readFramer := http2.NewFramer(io.Discard, reader)
+	frame, err := readFramer.ReadFrame()
+	if err != nil {
+		t.Fatalf("read headers frame: %v", err)
+	}
+	headers, ok := frame.(*http2.HeadersFrame)
+	if !ok {
+		t.Fatalf("frame = %T, want *http2.HeadersFrame", frame)
+	}
+
+	_, err = readBuildKitHeaderFragments(readFramer, headers)
+	if err == nil {
+		t.Fatal("expected non-continuation frame error")
+	}
+	if !strings.Contains(err.Error(), "CONTINUATION") && !strings.Contains(err.Error(), "PROTOCOL_ERROR") {
+		t.Fatalf("error = %q, want fail-closed non-continuation failure", err)
+	}
+}
+
+func TestBuildKitControlInspectorRejectsMalformedContinuationSequence(t *testing.T) {
+	var raw bytes.Buffer
+	raw.WriteString(http2.ClientPreface)
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      1,
+		BlockFragment: []byte{0x82},
+		EndHeaders:    false,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+	if err := framer.WriteData(1, true, []byte("not-a-continuation")); err != nil {
+		t.Fatalf("write data: %v", err)
+	}
+
+	_, err := inspectBuildKitControlStream(bytes.NewReader(raw.Bytes()), 1024)
+	if err == nil {
+		t.Fatal("expected malformed header continuation error")
+	}
+	if !strings.Contains(err.Error(), "header") && !strings.Contains(err.Error(), "PROTOCOL_ERROR") {
+		t.Fatalf("error = %q, want fail-closed inspector failure", err)
+	}
+}
+
+func TestBuildKitControlInspectorRejectsTruncatedContinuationSequence(t *testing.T) {
+	var raw bytes.Buffer
+	raw.WriteString(http2.ClientPreface)
+	framer := http2.NewFramer(&raw, nil)
+	if err := framer.WriteSettings(); err != nil {
+		t.Fatalf("write settings: %v", err)
+	}
+	if err := framer.WriteHeaders(http2.HeadersFrameParam{
+		StreamID:      1,
+		BlockFragment: []byte{0x82},
+		EndHeaders:    false,
+	}); err != nil {
+		t.Fatalf("write headers: %v", err)
+	}
+
+	_, err := inspectBuildKitControlStream(bytes.NewReader(raw.Bytes()), 1024)
+	if err == nil {
+		t.Fatal("expected truncated continuation error")
+	}
+	if !strings.Contains(err.Error(), "continuation") && !strings.Contains(err.Error(), "EOF") {
+		t.Fatalf("error = %q, want fail-closed truncated continuation failure", err)
+	}
+}
+
 func TestBuildKitControlTelemetryExportAllowed(t *testing.T) {
 	raw := buildBuildKitControlHeadersOnly(t, "/opentelemetry.proto.collector.trace.v1.TraceService/Export")
 

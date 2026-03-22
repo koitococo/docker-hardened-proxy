@@ -364,7 +364,11 @@ func readBuildKitControlMethod(framer *http2.Framer) (uint32, string, error) {
 }
 
 func decodeBuildKitControlMethod(framer *http2.Framer, headers *http2.HeadersFrame) (string, error) {
-	path, err := decodeBuildKitHeaderPath(readBuildKitHeaderFragments(framer, headers))
+	fragments, err := readBuildKitHeaderFragments(framer, headers)
+	if err != nil {
+		return "", fmt.Errorf("reading HTTP/2 header fragments: %w", err)
+	}
+	path, err := decodeBuildKitHeaderPath(fragments)
 	if err != nil {
 		return "", fmt.Errorf("decoding HTTP/2 header block: %w", err)
 	}
@@ -708,24 +712,27 @@ func readBuildKitControlHeaders(framer *http2.Framer, capture *frameCaptureReade
 	return path, completeRaw, nil
 }
 
-func readBuildKitHeaderFragments(framer *http2.Framer, headers *http2.HeadersFrame) []byte {
+func readBuildKitHeaderFragments(framer *http2.Framer, headers *http2.HeadersFrame) ([]byte, error) {
 	fragments := append([]byte{}, headers.HeaderBlockFragment()...)
 	streamID := headers.Header().StreamID
 	for !headers.HeadersEnded() {
 		frame, err := framer.ReadFrame()
 		if err != nil {
-			break
+			return nil, fmt.Errorf("reading HTTP/2 continuation frame: %w", err)
 		}
 		continuation, ok := frame.(*http2.ContinuationFrame)
-		if !ok || continuation.Header().StreamID != streamID {
-			break
+		if !ok {
+			return nil, fmt.Errorf("expected HTTP/2 CONTINUATION frame, got %s", frame.Header().Type)
+		}
+		if continuation.Header().StreamID != streamID {
+			return nil, fmt.Errorf("received CONTINUATION for unexpected stream %d", continuation.Header().StreamID)
 		}
 		fragments = append(fragments, continuation.HeaderBlockFragment()...)
 		if continuation.HeadersEnded() {
 			break
 		}
 	}
-	return fragments
+	return fragments, nil
 }
 
 func decodeBuildKitHeaderPath(fragments []byte) (string, error) {
