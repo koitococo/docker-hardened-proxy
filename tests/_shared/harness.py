@@ -10,6 +10,8 @@ import uuid
 from pathlib import Path
 
 import requests_unixsocket
+import json
+import tarfile
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -97,11 +99,34 @@ def docker_api_request(
     return response.status_code, response.content
 
 
+def docker_api_json(
+    proxy_socket: Path,
+    method: str,
+    path: str,
+    payload: dict | None = None,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, bytes]:
+    encoded = json.dumps(payload).encode("utf-8") if payload is not None else None
+    request_headers = {"Content-Type": "application/json"}
+    if headers:
+        request_headers.update(headers)
+    return docker_api_request(
+        proxy_socket=proxy_socket,
+        method=method,
+        path=path,
+        body=encoded,
+        headers=request_headers,
+    )
+
+
 def docker_cli(
     host: str, *args: str, check: bool = True
 ) -> subprocess.CompletedProcess[str]:
     env = os.environ.copy()
     env["DOCKER_HOST"] = host
+    docker_config = TESTS_DIR / ".docker-config"
+    docker_config.mkdir(parents=True, exist_ok=True)
+    env["DOCKER_CONFIG"] = str(docker_config)
     return subprocess.run(
         ["docker", *args],
         cwd=ROOT_DIR,
@@ -117,7 +142,11 @@ def ensure_image(image: str) -> None:
     inspect_result = docker_cli(upstream, "image", "inspect", image, check=False)
     if inspect_result.returncode == 0:
         return
-    docker_cli(upstream, "pull", image)
+    archive_path = TESTS_DIR / ".empty-image.tar"
+    if not archive_path.exists():
+        with tarfile.open(archive_path, mode="w"):
+            pass
+    docker_cli(upstream, "import", str(archive_path), image)
 
 
 def unique_name(prefix: str) -> str:
@@ -133,10 +162,23 @@ def inspect_container_labels(host: str, container_id: str) -> dict[str, str]:
     result = docker_cli(
         host, "inspect", container_id, "--format", "{{json .Config.Labels}}"
     )
-    import json
-
     labels = json.loads(result.stdout.strip())
     return labels or {}
+
+
+def create_container_via_proxy(proxy_socket: Path, payload: dict, *, name: str) -> str:
+    status_code, body = docker_api_json(
+        proxy_socket,
+        "POST",
+        f"/v1.52/containers/create?name={urllib.parse.quote(name, safe='')}",
+        payload,
+    )
+    if status_code != 201:
+        raise AssertionError(
+            f"expected create status 201, got {status_code}, body={body!r}"
+        )
+    response = json.loads(body.decode("utf-8"))
+    return response["Id"]
 
 
 class ProxyProcess:
