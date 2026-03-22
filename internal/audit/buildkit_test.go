@@ -51,6 +51,17 @@ func TestAuditBuildKitSessionHeaders(t *testing.T) {
 			},
 		},
 		{
+			name: "deny duplicate method values",
+			headers: http.Header{
+				"X-Docker-Expose-Session-Grpc-Method": []string{
+					"/moby.filesync.v1.FileSync/DiffCopy",
+					"/moby.filesync.v1.FileSync/DiffCopy",
+				},
+			},
+			wantDenied: true,
+			wantReason: "buildkit session request repeats X-Docker-Expose-Session-Grpc-Method value \"moby.filesync.v1.FileSync/DiffCopy\"",
+		},
+		{
 			name: "deny secrets method",
 			headers: http.Header{
 				"X-Docker-Expose-Session-Grpc-Method": []string{

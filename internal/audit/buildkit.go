@@ -64,6 +64,8 @@ func AuditBuildKitSessionHeaders(headers http.Header, cfg *config.Config) *Build
 		}
 	}
 
+	seen := make(map[string]struct{}, len(methods))
+
 	for _, rawMethod := range methods {
 		method := normalizeBuildKitSessionMethod(rawMethod)
 		if method == "" {
@@ -72,6 +74,13 @@ func AuditBuildKitSessionHeaders(headers http.Header, cfg *config.Config) *Build
 				Reason: "buildkit session request contains an empty X-Docker-Expose-Session-Grpc-Method value",
 			}
 		}
+		if _, ok := seen[method]; ok {
+			return &BuildKitAuditResult{
+				Denied: true,
+				Reason: fmt.Sprintf("buildkit session request repeats X-Docker-Expose-Session-Grpc-Method value %q", method),
+			}
+		}
+		seen[method] = struct{}{}
 		if reason := denyBuildKitSessionMethod(method, cfg.Audit.BuildKit.Session); reason != "" {
 			return &BuildKitAuditResult{Denied: true, Reason: reason}
 		}
