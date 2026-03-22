@@ -1,5 +1,7 @@
 /docker-hardened-proxy
 *.exe
-config.yaml
+/config.yaml
 .worktrees/
 .tmp/
+__pycache__/
+.build/
