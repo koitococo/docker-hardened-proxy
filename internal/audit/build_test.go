@@ -126,6 +126,52 @@ func TestAuditBuildStripEntitlements(t *testing.T) {
 	}
 }
 
+func TestAuditBuildDoesNotMutateInputQuery(t *testing.T) {
+	cfg := buildCfg("allow", nil)
+	query := url.Values{
+		"allow": {"network.host,some.other"},
+		"t":     {"example:latest"},
+	}
+
+	result := AuditBuild(query, cfg)
+	if result.Denied {
+		t.Fatalf("unexpected deny: %s", result.Reason)
+	}
+
+	if got := result.Query.Get("allow"); got != "some.other" {
+		t.Fatalf("result allow = %q, want %q", got, "some.other")
+	}
+
+	if got := query.Get("allow"); got != "network.host,some.other" {
+		t.Fatalf("input allow mutated to %q", got)
+	}
+
+	if got := query.Get("t"); got != "example:latest" {
+		t.Fatalf("input tag mutated to %q", got)
+	}
+	if got := result.Query.Get("t"); got != "example:latest" {
+		t.Fatalf("result tag = %q, want %q", got, "example:latest")
+	}
+}
+
+func TestAuditBuildResultQueryDoesNotShareSlicesWithInput(t *testing.T) {
+	cfg := buildCfg("allow", nil)
+	query := url.Values{
+		"buildargs": {"first", "second"},
+	}
+
+	result := AuditBuild(query, cfg)
+	if result.Denied {
+		t.Fatalf("unexpected deny: %s", result.Reason)
+	}
+
+	result.Query["buildargs"][0] = "changed"
+
+	if got := query["buildargs"][0]; got != "first" {
+		t.Fatalf("input buildargs[0] mutated to %q", got)
+	}
+}
+
 func TestMatchAllowed(t *testing.T) {
 	allowed := []string{"myapp", "registry.example.com/"}
 

@@ -41,10 +41,7 @@ func AuditBuild(query url.Values, cfg *config.Config) *BuildAuditResult {
 	}
 
 	// Build a rewritten copy of the query
-	rewritten := make(url.Values)
-	for k, v := range query {
-		rewritten[k] = v
-	}
+	rewritten := cloneQueryValues(query)
 
 	// Deny host network mode
 	if nm := rewritten.Get("networkmode"); nm == "host" {
@@ -55,6 +52,14 @@ func AuditBuild(query url.Values, cfg *config.Config) *BuildAuditResult {
 	rewritten = stripEntitlements(rewritten)
 
 	return &BuildAuditResult{Query: rewritten}
+}
+
+func cloneQueryValues(query url.Values) url.Values {
+	cloned := make(url.Values, len(query))
+	for key, values := range query {
+		cloned[key] = append([]string(nil), values...)
+	}
+	return cloned
 }
 
 // dangerousEntitlements are BuildKit entitlements that must be stripped.
