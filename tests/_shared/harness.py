@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import os
 import shutil
-import socket
 import subprocess
 import tempfile
 import time
+import urllib.parse
+import uuid
 from pathlib import Path
+
+import requests_unixsocket
 
 
 ROOT_DIR = Path(__file__).resolve().parents[2]
@@ -39,6 +42,10 @@ def ensure_binary() -> Path:
         check=True,
     )
     return BIN_PATH
+
+
+def proxy_docker_host(proxy_socket: Path) -> str:
+    return f"unix://{proxy_socket}"
 
 
 def load_config_template(test_dir: Path) -> str:
@@ -77,34 +84,59 @@ def docker_api_request(
     body: bytes | None = None,
     headers: dict[str, str] | None = None,
 ) -> tuple[int, bytes]:
-    body = body or b""
-    headers = headers or {}
-    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.connect(str(proxy_socket))
-    try:
-        request_lines = [
-            f"{method} {path} HTTP/1.1",
-            "Host: docker",
-            f"Content-Length: {len(body)}",
-        ]
-        for key, value in headers.items():
-            request_lines.append(f"{key}: {value}")
-        raw = "\r\n".join(request_lines).encode("utf-8") + b"\r\n\r\n" + body
-        sock.sendall(raw)
+    encoded_socket = urllib.parse.quote(str(proxy_socket), safe="")
+    url = f"http+unix://{encoded_socket}{path}"
+    session = requests_unixsocket.Session()
+    response = session.request(
+        method=method,
+        url=url,
+        data=body,
+        headers=headers,
+        timeout=10,
+    )
+    return response.status_code, response.content
 
-        response = bytearray()
-        while True:
-            chunk = sock.recv(65536)
-            if not chunk:
-                break
-            response.extend(chunk)
-    finally:
-        sock.close()
 
-    header_bytes, _, body_bytes = bytes(response).partition(b"\r\n\r\n")
-    status_line = header_bytes.split(b"\r\n", 1)[0].decode("utf-8", errors="replace")
-    status_code = int(status_line.split()[1])
-    return status_code, body_bytes
+def docker_cli(
+    host: str, *args: str, check: bool = True
+) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env["DOCKER_HOST"] = host
+    return subprocess.run(
+        ["docker", *args],
+        cwd=ROOT_DIR,
+        env=env,
+        check=check,
+        text=True,
+        capture_output=True,
+    )
+
+
+def ensure_image(image: str) -> None:
+    upstream = require_docker_host()
+    inspect_result = docker_cli(upstream, "image", "inspect", image, check=False)
+    if inspect_result.returncode == 0:
+        return
+    docker_cli(upstream, "pull", image)
+
+
+def unique_name(prefix: str) -> str:
+    suffix = uuid.uuid4().hex[:8]
+    return f"{prefix}-{suffix}"
+
+
+def cleanup_container(host: str, name_or_id: str) -> None:
+    docker_cli(host, "rm", "-f", name_or_id, check=False)
+
+
+def inspect_container_labels(host: str, container_id: str) -> dict[str, str]:
+    result = docker_cli(
+        host, "inspect", container_id, "--format", "{{json .Config.Labels}}"
+    )
+    import json
+
+    labels = json.loads(result.stdout.strip())
+    return labels or {}
 
 
 class ProxyProcess:
@@ -124,6 +156,10 @@ class ProxyProcess:
                 self.process.kill()
                 self.process.wait(timeout=5)
         shutil.rmtree(self.work_dir, ignore_errors=True)
+
+    @property
+    def docker_host(self) -> str:
+        return proxy_docker_host(self.proxy_socket)
 
 
 def start_proxy(test_dir: Path, test_name: str) -> ProxyProcess:
