@@ -623,9 +623,13 @@ func forwardBuildKitStreamFrame(upstream io.Writer, streams map[uint32]*buildKit
 	return nil
 }
 
+// bufferBuildKitFrame stores a raw frame that already has exclusive ownership.
+// Callers must only pass frame bytes obtained from frameCaptureReader.Take or an
+// equivalent immutable copy, because buffered frames are retained for later
+// forwarding without taking an additional defensive copy here.
 func bufferBuildKitFrame(state *buildKitControlStreamState, rawFrame []byte, grpcBytes int) {
 	state.PendingFrames = append(state.PendingFrames, buildKitBufferedFrame{
-		raw:       bytes.Clone(rawFrame),
+		raw:       rawFrame,
 		grpcBytes: grpcBytes,
 	})
 	state.PendingGRPCBytes += grpcBytes

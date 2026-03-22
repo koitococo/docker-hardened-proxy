@@ -234,6 +234,40 @@ func TestProxyBuildKitControlFramesStreamsSafeSolveBeforeFullAuditCompletes(t *t
 	}
 }
 
+func TestBufferBuildKitFrameReusesOwnedRawFrameBytes(t *testing.T) {
+	state := &buildKitControlStreamState{}
+	rawFrame := []byte{0x01, 0x02, 0x03, 0x04}
+
+	bufferBuildKitFrame(state, rawFrame, 2)
+
+	if len(state.PendingFrames) != 1 {
+		t.Fatalf("len(PendingFrames) = %d, want 1", len(state.PendingFrames))
+	}
+	if len(state.PendingFrames[0].raw) != len(rawFrame) {
+		t.Fatalf("len(buffered raw) = %d, want %d", len(state.PendingFrames[0].raw), len(rawFrame))
+	}
+	if &state.PendingFrames[0].raw[0] != &rawFrame[0] {
+		t.Fatal("expected buffered frame to reuse owned raw frame bytes")
+	}
+}
+
+func TestFrameCaptureReaderTakeReturnsOwnedCopy(t *testing.T) {
+	source := []byte{0x01, 0x02, 0x03, 0x04}
+	reader := &frameCaptureReader{r: bytes.NewReader(source)}
+	buf := make([]byte, len(source))
+
+	if _, err := io.ReadFull(reader, buf); err != nil {
+		t.Fatalf("read full: %v", err)
+	}
+	captured := reader.Take()
+	if !bytes.Equal(captured, source) {
+		t.Fatalf("captured = %v, want %v", captured, source)
+	}
+	if &captured[0] == &source[0] {
+		t.Fatal("expected Take to return an owned copy")
+	}
+}
+
 func buildBuildKitControlHeadersOnly(t *testing.T, methodPath string) []byte {
 	t.Helper()
 
