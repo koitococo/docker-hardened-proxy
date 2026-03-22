@@ -11,7 +11,9 @@ import (
 	"time"
 
 	control "github.com/moby/buildkit/api/services/control"
+	gateway "github.com/moby/buildkit/frontend/gateway/pb"
 	pb "github.com/moby/buildkit/solver/pb"
+	sourcepolicypb "github.com/moby/buildkit/sourcepolicy/pb"
 	"google.golang.org/protobuf/proto"
 
 	"github.com/koitococo/docker-hardened-proxy/internal/config"
@@ -457,6 +459,109 @@ func TestProxyBuildKitControlFramesReleasesAggregateBufferedSolveBytesOnRSTStrea
 	}
 	if !bytes.Contains(forwarded.Bytes(), secondRemainder) {
 		t.Fatal("expected second solve stream to complete after RST_STREAM released buffered budget")
+	}
+}
+
+func TestAuditBuildKitControlPayloadDeniesLLBBridgeSolveWithFrontendOpts(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		Frontend:    "gateway.v0",
+		FrontendOpt: map[string]string{"source": "docker/dockerfile:latest"},
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("Denied = false, want true")
+	}
+	if !strings.Contains(result.Reason, "frontend options") {
+		t.Fatalf("Reason = %q, want frontend options denial", result.Reason)
+	}
+}
+
+func TestAuditBuildKitControlPayloadDeniesLLBBridgeSolveWithFrontendInputs(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		Frontend: "gateway.v0",
+		FrontendInputs: map[string]*pb.Definition{
+			"context": {Def: [][]byte{mustMarshalBuildKitProto(t, &pb.Op{})}},
+		},
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("Denied = false, want true")
+	}
+	if !strings.Contains(result.Reason, "frontend inputs") {
+		t.Fatalf("Reason = %q, want frontend inputs denial", result.Reason)
+	}
+}
+
+func TestAuditBuildKitControlPayloadDeniesLLBBridgeSolveWithSourcePolicies(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		SourcePolicies: []*sourcepolicypb.Policy{{Version: 1, Rules: []*sourcepolicypb.Rule{{}}}},
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("Denied = false, want true")
+	}
+	if !strings.Contains(result.Reason, "source policies") {
+		t.Fatalf("Reason = %q, want source policies denial", result.Reason)
+	}
+}
+
+func TestAuditBuildKitControlPayloadDeniesLLBBridgeSolveWithCacheImports(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		CacheImports: []*gateway.CacheOptionsEntry{{Type: "registry"}},
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("Denied = false, want true")
+	}
+	if !strings.Contains(result.Reason, "cache imports") {
+		t.Fatalf("Reason = %q, want cache imports denial", result.Reason)
+	}
+}
+
+func TestAuditBuildKitControlPayloadDeniesLLBBridgeSolveWithExporterAttrs(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		ExporterAttr: []byte(`{"name":"value"}`),
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.Denied {
+		t.Fatal("Denied = false, want true")
+	}
+	if !strings.Contains(result.Reason, "exporter attributes") {
+		t.Fatalf("Reason = %q, want exporter attributes denial", result.Reason)
+	}
+}
+
+func TestAuditBuildKitControlPayloadAllowsSafeLLBBridgeSolve(t *testing.T) {
+	payload := mustMarshalBuildKitProto(t, &gateway.SolveRequest{
+		Definition: &pb.Definition{Def: [][]byte{mustMarshalBuildKitProto(t, &pb.Op{Op: &pb.Op_Exec{Exec: &pb.ExecOp{}}})}},
+	})
+
+	result, err := auditBuildKitControlPayload(buildKitLLBBridgeSolveMethod, payload, testCfg())
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Denied {
+		t.Fatalf("Denied = true, want false (reason=%q)", result.Reason)
 	}
 }
 

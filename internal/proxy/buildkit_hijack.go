@@ -792,6 +792,9 @@ func auditBuildKitControlPayload(methodPath string, payload []byte, cfg *config.
 		if err := proto.Unmarshal(payload, &req); err != nil {
 			return nil, fmt.Errorf("decoding buildkit llbbridge solve request: %w", err)
 		}
+		if result := auditBuildKitLLBBridgeSolveRequest(&req); result.Denied {
+			return result, nil
+		}
 		// Convert LLBBridge SolveRequest to control SolveRequest for auditing
 		controlReq := convertLLBBridgeToControlSolveRequest(&req)
 		result, err := audit.AuditBuildKitSolve(controlReq, cfg)
@@ -802,6 +805,41 @@ func auditBuildKitControlPayload(methodPath string, payload []byte, cfg *config.
 	default:
 		return &audit.BuildKitAuditResult{}, nil
 	}
+}
+
+func auditBuildKitLLBBridgeSolveRequest(req *gateway.SolveRequest) *audit.BuildKitAuditResult {
+	if len(req.FrontendOpt) > 0 {
+		return &audit.BuildKitAuditResult{
+			Denied: true,
+			Reason: "buildkit llbbridge solve frontend options are denied by policy",
+		}
+	}
+	if len(req.FrontendInputs) > 0 {
+		return &audit.BuildKitAuditResult{
+			Denied: true,
+			Reason: "buildkit llbbridge solve frontend inputs are denied by policy",
+		}
+	}
+	if len(req.SourcePolicies) > 0 {
+		return &audit.BuildKitAuditResult{
+			Denied: true,
+			Reason: "buildkit llbbridge solve source policies are denied by policy",
+		}
+	}
+	if len(req.CacheImports) > 0 {
+		return &audit.BuildKitAuditResult{
+			Denied: true,
+			Reason: "buildkit llbbridge solve cache imports are denied by policy",
+		}
+	}
+	if len(req.ExporterAttr) > 0 {
+		return &audit.BuildKitAuditResult{
+			Denied: true,
+			Reason: "buildkit llbbridge solve exporter attributes are denied by policy",
+		}
+	}
+
+	return &audit.BuildKitAuditResult{}
 }
 
 // convertLLBBridgeToControlSolveRequest converts a gateway.SolveRequest to control.SolveRequest
