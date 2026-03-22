@@ -1,0 +1,13 @@
+listeners:
+  unix:
+    path: "__PROXY_SOCKET__"
+    mode: 0600
+
+upstream:
+  url: "__DOCKER_HOST__"
+
+namespace: "team-b"
+
+logging:
+  level: "info"
+  format: "json"

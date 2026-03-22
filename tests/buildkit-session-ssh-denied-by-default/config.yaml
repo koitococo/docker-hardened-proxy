@@ -1,0 +1,16 @@
+listeners:
+  unix:
+    path: "__PROXY_SOCKET__"
+    mode: 0600
+
+upstream:
+  url: "__DOCKER_HOST__"
+
+namespace: "team-buildkit-session-ssh"
+
+audit:
+  deny_buildkit: false
+
+logging:
+  level: "info"
+  format: "json"
