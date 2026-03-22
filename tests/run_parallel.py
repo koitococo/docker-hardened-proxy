@@ -14,6 +14,13 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parent
 REPORTS_DIR = ROOT_DIR / "reports"
+SERIAL_ONLY_TESTS = {
+    "buildkit-control-disk-usage-denied-by-default",
+    "buildkit-control-history-denied-by-default",
+    "buildkit-control-prune-denied-by-default",
+    "buildkit-control-unknown-method-denied",
+    "buildkit-session-filesync-allowed-by-default-when-buildkit-enabled",
+}
 
 
 @dataclass
@@ -108,6 +115,9 @@ def write_reports(
     REPORTS_DIR.mkdir(parents=True, exist_ok=True)
     json_path = REPORTS_DIR / "latest.json"
     text_path = REPORTS_DIR / "latest.txt"
+    timestamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+    archive_json_path = REPORTS_DIR / f"report-{timestamp}.json"
+    archive_text_path = REPORTS_DIR / f"report-{timestamp}.txt"
 
     payload = {
         "generated_at": datetime.now(UTC).isoformat(),
@@ -117,11 +127,30 @@ def write_reports(
         "duration_seconds": total_duration,
         "results": [asdict(item) for item in results],
     }
-    json_path.write_text(
-        json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
-    )
-    text_path.write_text(format_text_report(results, total_duration), encoding="utf-8")
+    json_content = json.dumps(payload, indent=2, ensure_ascii=False) + "\n"
+    text_content = format_text_report(results, total_duration)
+
+    archive_json_path.write_text(json_content, encoding="utf-8")
+    archive_text_path.write_text(text_content, encoding="utf-8")
+
+    temp_json_path = REPORTS_DIR / "latest.json.tmp"
+    temp_text_path = REPORTS_DIR / "latest.txt.tmp"
+    temp_json_path.write_text(json_content, encoding="utf-8")
+    temp_text_path.write_text(text_content, encoding="utf-8")
+    temp_json_path.replace(json_path)
+    temp_text_path.replace(text_path)
     return json_path, text_path
+
+
+def split_parallel_groups(scripts: list[Path]) -> tuple[list[Path], list[Path]]:
+    serial: list[Path] = []
+    parallel: list[Path] = []
+    for script in scripts:
+        if script.parent.name in SERIAL_ONLY_TESTS:
+            serial.append(script)
+        else:
+            parallel.append(script)
+    return serial, parallel
 
 
 def main() -> None:
@@ -136,8 +165,18 @@ def main() -> None:
 
     started = time.perf_counter()
     results: list[TestResult] = []
+    serial_scripts, parallel_scripts = split_parallel_groups(scripts)
+
+    for script in serial_scripts:
+        result = run_test(script)
+        results.append(result)
+        status = "PASS" if result.ok else "FAIL"
+        print(f"{status} {result.name} ({result.duration_seconds:.2f}s) [serial]")
+
     with ThreadPoolExecutor(max_workers=max(1, args.workers)) as executor:
-        future_map = {executor.submit(run_test, script): script for script in scripts}
+        future_map = {
+            executor.submit(run_test, script): script for script in parallel_scripts
+        }
         for future in as_completed(future_map):
             result = future.result()
             results.append(result)

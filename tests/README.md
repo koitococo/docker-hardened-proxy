@@ -8,7 +8,7 @@
 - 每个测试用例必须位于独立目录：`tests/<test_name>/`。
 - 每个测试目录必须至少包含：
   - `config.yaml`
-  - `run_test.py` 或 `run_test.ts`
+  - `run_test.py`
 - 每个测试必须独立创建并清理自己的资源，避免与其他测试共享状态。
 
 ## 推荐执行方式
@@ -16,6 +16,7 @@
 - 单用例执行：进入 `tests/` 目录后运行 `uv run python3 <test_name>/run_test.py`。
 - 全量执行：在 `tests/` 目录运行 `uv run python3 run_all.py`。
 - 并行执行：在 `tests/` 目录运行 `uv run python3 run_parallel.py`。
+- 部分依赖 buildx 全局状态的测试会由并行 runner 自动按串行方式执行。
 
 ## 环境变量
 
@@ -37,4 +38,5 @@
 - 并行执行脚本会写入：
   - `tests/reports/latest.json`
   - `tests/reports/latest.txt`
+- 并额外生成带时间戳的归档报告文件。
 - 可通过 `uv run python3 run_parallel.py --workers 4` 控制并发数。
