@@ -23,6 +23,13 @@ BUILD_DIR = TESTS_DIR / ".build"
 BIN_PATH = BUILD_DIR / "docker-hardened-proxy"
 BIN_LOCK_PATH = BUILD_DIR / ".build.lock"
 
+SOURCE_PATHS = (
+    ROOT_DIR / "go.mod",
+    ROOT_DIR / "go.sum",
+    ROOT_DIR / "cmd",
+    ROOT_DIR / "internal",
+)
+
 
 def require_docker_host() -> str:
     docker_host = os.environ.get("DOCKER_HOST", "").strip()
@@ -35,7 +42,7 @@ def ensure_binary() -> Path:
     BUILD_DIR.mkdir(parents=True, exist_ok=True)
     with BIN_LOCK_PATH.open("w", encoding="utf-8") as lock_file:
         fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
-        if BIN_PATH.exists():
+        if not binary_needs_rebuild(BIN_PATH, SOURCE_PATHS):
             return BIN_PATH
 
         temp_path = BUILD_DIR / "docker-hardened-proxy.tmp"
@@ -52,6 +59,32 @@ def ensure_binary() -> Path:
         )
         temp_path.replace(BIN_PATH)
     return BIN_PATH
+
+
+def binary_needs_rebuild(
+    binary_path: Path, source_paths: tuple[Path, ...] | list[Path]
+) -> bool:
+    if not binary_path.exists():
+        return True
+
+    binary_mtime = binary_path.stat().st_mtime
+    for source_path in source_paths:
+        if latest_mtime(source_path) > binary_mtime:
+            return True
+    return False
+
+
+def latest_mtime(path: Path) -> float:
+    if not path.exists():
+        return 0.0
+    if path.is_file():
+        return path.stat().st_mtime
+
+    latest = path.stat().st_mtime
+    for child in path.rglob("*"):
+        if child.is_file():
+            latest = max(latest, child.stat().st_mtime)
+    return latest
 
 
 def proxy_docker_host(proxy_socket: Path) -> str:
