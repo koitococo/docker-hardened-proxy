@@ -48,6 +48,7 @@
 
 ## High-value files
 - `README.md` - user-facing behavior and policy examples
+- `docs/configuration-guide.md` - comprehensive configuration documentation with all options explained
 - `justfile` - canonical local dev commands
 - `config.example.yaml` - supported config surface
 - `internal/audit/AGENTS.md` - audit-module-specific rules and check ordering
